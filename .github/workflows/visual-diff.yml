@@ -14,13 +14,14 @@ jobs:
       with:
         lfs: true
         fetch-depth: 0
+        submodules: recursive
     
-    - name: Install ImageMagick for image comparison
+    - name: Install NVIDIA FLIP for image comparison
       run: |
-        # Install ImageMagick for reliable image comparison
-        sudo apt-get update
-        sudo apt-get install -y imagemagick
-        compare -version
+        # Install NVIDIA FLIP from submodule for high-fidelity image comparison
+        cd third-party/flip
+        pip install flip-evaluator
+        flip --version
     
     - name: Setup Python for test execution
       uses: actions/setup-python@v4
@@ -85,17 +86,25 @@ jobs:
             # Fetch the specific golden LFS file
             git lfs pull --include "$golden_file"
             
-            # Compare using ImageMagick compare
-            compare "$golden_file" "$output_file" "$diff_file" 2>/dev/null
-            compare_exit_code=$?
+            # Compare using NVIDIA FLIP for high-fidelity comparison
+            # FLIP outputs difference metrics and generates diff images
+            flip_output=$(flip -r "$golden_file" -t "$output_file" -d "diffs" -b "diff_$(basename "$filename" .png)" --verbosity 1 2>&1)
             
-            if [ $compare_exit_code -ne 0 ]; then
-              # Images are different
+            # Extract the mean FLIP error from the output
+            mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
+            
+            # Check if there's any meaningful difference (FLIP error > 0.001)
+            # Using awk for floating point comparison
+            is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
+            
+            if [ "$is_different" = "yes" ]; then
               echo "🔄 **Changed Image:** \`$filename\`" >> comparison_report.md
+              echo "" >> comparison_report.md
+              echo "**FLIP Error:** $mean_error" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "| Difference | New Output |" >> comparison_report.md
               echo "|------------|------------|" >> comparison_report.md
-              echo "| ![Difference](./diffs/diff_$filename) | ![New Output](./outputs/$filename) |" >> comparison_report.md
+              echo "| ![Difference](./diffs/diff_$(basename "$filename" .png).png) | ![New Output](./outputs/$filename) |" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "To accept this change, comment: \`/accept-image $filename\`" >> comparison_report.md
               echo "" >> comparison_report.md
