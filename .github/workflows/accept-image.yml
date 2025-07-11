@@ -135,11 +135,7 @@ jobs:
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.issue.number,
-            body: `✅ Successfully accepted \`${imageName}\` as the new golden image! 
-            
-The image has been committed to the \`golden/\` directory and will be used for future comparisons.
-
-Accepted by: @${commenter}`
+            body: `✅ Successfully accepted \`${imageName}\` as the new golden image!\n\nThe image has been committed to the \`golden/\` directory and will be used for future comparisons.\n\nAccepted by: @${commenter}`
           });
     
     - name: Comment on failure
