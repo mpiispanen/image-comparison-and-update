@@ -15,14 +15,12 @@ jobs:
         lfs: true
         fetch-depth: 0
     
-    - name: Install NVIDIA flip
+    - name: Install ImageMagick for image comparison
       run: |
-        # Download and install NVIDIA flip
-        wget -q https://github.com/NVlabs/flip/releases/download/v1.2.0/flip-ubuntu-x64.tar.gz
-        tar -xzf flip-ubuntu-x64.tar.gz
-        sudo mv flip /usr/local/bin/
-        chmod +x /usr/local/bin/flip
-        flip --help
+        # Install ImageMagick for reliable image comparison
+        sudo apt-get update
+        sudo apt-get install -y imagemagick
+        compare -version
     
     - name: Setup Python for test execution
       uses: actions/setup-python@v4
@@ -87,8 +85,11 @@ jobs:
             # Fetch the specific golden LFS file
             git lfs pull --include "$golden_file"
             
-            # Compare using flip
-            flip -r "$golden_file" -t "$output_file" -d "$diff_file" || {
+            # Compare using ImageMagick compare
+            compare "$golden_file" "$output_file" "$diff_file" 2>/dev/null
+            compare_exit_code=$?
+            
+            if [ $compare_exit_code -ne 0 ]; then
               # Images are different
               echo "🔄 **Changed Image:** \`$filename\`" >> comparison_report.md
               echo "" >> comparison_report.md
@@ -101,7 +102,7 @@ jobs:
               
               CHANGED_IMAGES="$CHANGED_IMAGES $filename"
               CHANGES_DETECTED=true
-            }
+            fi
           fi
         done
         
