@@ -14,12 +14,10 @@ jobs:
       with:
         lfs: true
         fetch-depth: 0
-        submodules: recursive
     
     - name: Install NVIDIA FLIP for image comparison
       run: |
-        # Install NVIDIA FLIP from submodule for high-fidelity image comparison
-        cd third-party/flip
+        # Install NVIDIA FLIP from PyPI for high-fidelity image comparison
         pip install flip-evaluator
         flip --version
     
