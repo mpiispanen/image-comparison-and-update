@@ -90,10 +90,40 @@ jobs:
             diff_basename="diff_${basename_no_ext}"
             
             # Debug: Print the command that will be executed
+            echo "Variables:"
+            echo "  golden_file: '$golden_file'"
+            echo "  output_file: '$output_file'"
+            echo "  diff_basename: '$diff_basename'"
+            echo "Golden file exists: $([ -f "$golden_file" ] && echo 'YES' || echo 'NO')"
+            echo "Output file exists: $([ -f "$output_file" ] && echo 'YES' || echo 'NO')"
+            echo ""
+            
+            # Ensure both files exist before running FLIP
+            if [ ! -f "$golden_file" ]; then
+              echo "Error: Golden file does not exist: $golden_file"
+              continue
+            fi
+            if [ ! -f "$output_file" ]; then
+              echo "Error: Output file does not exist: $output_file"
+              continue
+            fi
+            
+            # Use short-form parameters to avoid any argument parsing issues
             echo "Running FLIP command: flip -r '$golden_file' -t '$output_file' -d diffs -b '$diff_basename' -v 1"
             
-            # Run FLIP with explicit parameters (avoid potential argument parsing issues)
-            flip_output=$(flip --reference "$golden_file" --test "$output_file" --directory diffs --basename "$diff_basename" --verbosity 1 2>&1)
+            # Run FLIP with short-form parameters for better compatibility
+            flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "$diff_basename" -v 1 2>&1)
+            flip_exit_code=$?
+            
+            echo "FLIP exit code: $flip_exit_code"
+            echo "FLIP output: $flip_output"
+            
+            # Check if FLIP command succeeded
+            if [ $flip_exit_code -ne 0 ]; then
+              echo "Error: FLIP command failed with exit code $flip_exit_code"
+              echo "Error output: $flip_output"
+              continue
+            fi
             
             # Extract the mean FLIP error from the output
             mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
