@@ -19,7 +19,7 @@ jobs:
       run: |
         # Install NVIDIA FLIP from PyPI for high-fidelity image comparison
         pip install flip-evaluator
-        flip --version
+        flip --help
     
     - name: Setup Python for test execution
       uses: actions/setup-python@v4
