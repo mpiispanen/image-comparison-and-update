@@ -54,9 +54,16 @@ jobs:
         CHANGED_IMAGES=""
         CHANGES_DETECTED=false
         
-        # Create comparison report
+        # Create comparison report with summary table
         echo "# Visual Regression Test Results" > comparison_report.md
         echo "" >> comparison_report.md
+        echo "## Summary" >> comparison_report.md
+        echo "" >> comparison_report.md
+        echo "| File | Status | FLIP Mean Error | Result |" >> comparison_report.md
+        echo "|------|--------|-----------------|--------|" >> comparison_report.md
+        
+        # Initialize summary data
+        summary_data=""
         
         # Process each output image
         for output_file in outputs/*.png; do
@@ -74,14 +81,7 @@ jobs:
           # Check if golden image exists
           if [ ! -f "$golden_file" ]; then
             # New image - no golden master exists
-            echo "⚠️ **New Image:** \`$filename\`" >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "| New Output |" >> comparison_report.md
-            echo "|------------|" >> comparison_report.md
-            echo "| ![New Output](./outputs/$filename) |" >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "To accept this new image as the golden master, comment: \`/accept-image $filename\`" >> comparison_report.md
-            echo "" >> comparison_report.md
+            summary_data="$summary_data| \`$filename\` | 🆕 New | N/A | Needs acceptance |\n"
             
             CHANGED_IMAGES="$CHANGED_IMAGES $filename"
             CHANGES_DETECTED=true
@@ -93,12 +93,14 @@ jobs:
             # FLIP outputs difference metrics and generates diff images
             basename_no_ext=$(basename "$filename" .png)
             diff_basename="diff_${basename_no_ext}"
+            stats_file="diffs/${diff_basename}_stats.txt"
             
             # Debug: Print the command that will be executed
             echo "Variables:"
             echo "  golden_file: '$golden_file'"
             echo "  output_file: '$output_file'"
             echo "  diff_basename: '$diff_basename'"
+            echo "  stats_file: '$stats_file'"
             echo "Golden file exists: $([ -f "$golden_file" ] && echo 'YES' || echo 'NO')"
             echo "Output file exists: $([ -f "$output_file" ] && echo 'YES' || echo 'NO')"
             echo ""
@@ -113,11 +115,11 @@ jobs:
               continue
             fi
             
-            # Use short-form parameters to avoid any argument parsing issues
-            echo "Running FLIP command: flip -r '$golden_file' -t '$output_file' -d diffs -b '$diff_basename' -v 1"
+            # Use enhanced FLIP parameters for comprehensive statistics
+            echo "Running FLIP command: flip -r '$golden_file' -t '$output_file' -d diffs -b '$diff_basename' -v 2 -txt"
             
-            # Run FLIP with short-form parameters for better compatibility
-            flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "$diff_basename" -v 1 2>&1)
+            # Run FLIP with enhanced verbosity and text output for detailed statistics
+            flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "$diff_basename" -v 2 -txt 2>&1)
             flip_exit_code=$?
             
             echo "FLIP exit code: $flip_exit_code"
@@ -127,30 +129,109 @@ jobs:
             if [ $flip_exit_code -ne 0 ]; then
               echo "Error: FLIP command failed with exit code $flip_exit_code"
               echo "Error output: $flip_output"
+              summary_data="$summary_data| \`$filename\` | ❌ Error | N/A | FLIP failed |\n"
               continue
             fi
             
-            # Extract the mean FLIP error from the output
+            # Extract comprehensive FLIP statistics from the output
             mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
+            median_error=$(echo "$flip_output" | grep "Weighted median:" | awk '{print $3}')
+            q1_error=$(echo "$flip_output" | grep "1st weighted quartile:" | awk '{print $4}')
+            q3_error=$(echo "$flip_output" | grep "3rd weighted quartile:" | awk '{print $4}')
+            min_error=$(echo "$flip_output" | grep "Min:" | awk '{print $2}')
+            max_error=$(echo "$flip_output" | grep "Max:" | awk '{print $2}')
+            ppd=$(echo "$flip_output" | grep "Pixels per degree:" | awk '{print $4}')
+            eval_time=$(echo "$flip_output" | grep "Evaluation time:" | awk '{print $3}')
             
             # Check if there's any meaningful difference (FLIP error > 0.001)
             # Using awk for floating point comparison
             is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
             
             if [ "$is_different" = "yes" ]; then
-              echo "🔄 **Changed Image:** \`$filename\`" >> comparison_report.md
-              echo "" >> comparison_report.md
-              echo "**FLIP Error:** $mean_error" >> comparison_report.md
-              echo "" >> comparison_report.md
-              echo "| Difference | New Output |" >> comparison_report.md
-              echo "|------------|------------|" >> comparison_report.md
-              echo "| ![Difference](./diffs/${diff_basename}.png) | ![New Output](./outputs/$filename) |" >> comparison_report.md
-              echo "" >> comparison_report.md
-              echo "To accept this change, comment: \`/accept-image $filename\`" >> comparison_report.md
-              echo "" >> comparison_report.md
-              
+              summary_data="$summary_data| \`$filename\` | 🔄 Changed | $mean_error | Needs review |\n"
               CHANGED_IMAGES="$CHANGED_IMAGES $filename"
               CHANGES_DETECTED=true
+            else
+              summary_data="$summary_data| \`$filename\` | ✅ Passed | $mean_error | No changes |\n"
+            fi
+          fi
+        done
+        
+        # Add summary data to report
+        echo -e "$summary_data" >> comparison_report.md
+        echo "" >> comparison_report.md
+        
+        # Add detailed results for changed/new images
+        echo "## Detailed Results" >> comparison_report.md
+        echo "" >> comparison_report.md
+        
+        # Process each output image again for detailed reports
+        for output_file in outputs/*.png; do
+          if [ ! -f "$output_file" ]; then
+            continue
+          fi
+          
+          filename=$(basename "$output_file")
+          golden_file="golden/$filename"
+          
+          # Check if golden image exists
+          if [ ! -f "$golden_file" ]; then
+            # New image - no golden master exists
+            echo "### 🆕 **New Image:** \`$filename\`" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "| New Output |" >> comparison_report.md
+            echo "|------------|" >> comparison_report.md
+            echo "| ![New Output](./outputs/$filename) |" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "To accept this new image as the golden master, comment: \`/accept-image $filename\`" >> comparison_report.md
+            echo "" >> comparison_report.md
+          else
+            # Compare using NVIDIA FLIP for high-fidelity comparison
+            basename_no_ext=$(basename "$filename" .png)
+            diff_basename="diff_${basename_no_ext}"
+            stats_file="diffs/${diff_basename}_stats.txt"
+            
+            # Fetch the specific golden LFS file
+            git lfs pull --include "$golden_file"
+            
+            # Run FLIP again (or reuse previous results if we want to optimize)
+            flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "$diff_basename" -v 2 -txt 2>&1)
+            flip_exit_code=$?
+            
+            if [ $flip_exit_code -eq 0 ]; then
+              # Extract comprehensive FLIP statistics
+              mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
+              median_error=$(echo "$flip_output" | grep "Weighted median:" | awk '{print $3}')
+              q1_error=$(echo "$flip_output" | grep "1st weighted quartile:" | awk '{print $4}')
+              q3_error=$(echo "$flip_output" | grep "3rd weighted quartile:" | awk '{print $4}')
+              min_error=$(echo "$flip_output" | grep "Min:" | awk '{print $2}')
+              max_error=$(echo "$flip_output" | grep "Max:" | awk '{print $2}')
+              ppd=$(echo "$flip_output" | grep "Pixels per degree:" | awk '{print $4}')
+              eval_time=$(echo "$flip_output" | grep "Evaluation time:" | awk '{print $3}')
+              
+              # Check if there's any meaningful difference
+              is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
+              
+              if [ "$is_different" = "yes" ]; then
+                echo "### 🔄 **Changed Image:** \`$filename\`" >> comparison_report.md
+                echo "" >> comparison_report.md
+                echo "**FLIP Statistics:**" >> comparison_report.md
+                echo "- **Mean Error:** $mean_error" >> comparison_report.md
+                echo "- **Weighted Median:** $median_error" >> comparison_report.md
+                echo "- **Weighted 1st Quartile:** $q1_error" >> comparison_report.md
+                echo "- **Weighted 3rd Quartile:** $q3_error" >> comparison_report.md
+                echo "- **Min Error:** $min_error" >> comparison_report.md
+                echo "- **Max Error:** $max_error" >> comparison_report.md
+                echo "- **Pixels Per Degree:** $ppd" >> comparison_report.md
+                echo "- **Evaluation Time:** $eval_time" >> comparison_report.md
+                echo "" >> comparison_report.md
+                echo "| Difference | New Output |" >> comparison_report.md
+                echo "|------------|------------|" >> comparison_report.md
+                echo "| ![Difference](./diffs/${diff_basename}.png) | ![New Output](./outputs/$filename) |" >> comparison_report.md
+                echo "" >> comparison_report.md
+                echo "To accept this change, comment: \`/accept-image $filename\`" >> comparison_report.md
+                echo "" >> comparison_report.md
+              fi
             fi
           fi
         done
