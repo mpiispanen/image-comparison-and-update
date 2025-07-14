@@ -264,11 +264,18 @@ jobs:
       id: commit_images
       continue-on-error: true
       run: |
-        set -e
+        # Initialize output - this ensures the variable is always set
+        echo "images_committed=false" >> $GITHUB_OUTPUT
         
         # Configure git for committing
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]" || {
+          echo "Failed to configure git user name"
+          exit 0
+        }
+        git config user.email "github-actions[bot]@users.noreply.github.com" || {
+          echo "Failed to configure git user email"
+          exit 0
+        }
         
         # Debug: Show current git status
         echo "=== Git Status Debug ==="
@@ -307,26 +314,23 @@ jobs:
         
         # Add the generated images to git (temporarily for display purposes)
         echo "Adding images to git..."
-        git add outputs/ diffs/ || {
+        if ! git add outputs/ diffs/; then
           echo "Failed to add images to git"
-          echo "images_committed=false" >> $GITHUB_OUTPUT
           exit 0
-        }
+        fi
         
         # Check if there are any changes to commit
         if git diff --staged --quiet; then
           echo "No changes to commit"
-          echo "images_committed=false" >> $GITHUB_OUTPUT
           exit 0
         fi
         
         # Commit the changes
         echo "Committing images..."
-        git commit -m "temp: Add visual diff artifacts for PR display [skip ci]" || {
+        if ! git commit -m "temp: Add visual diff artifacts for PR display [skip ci]"; then
           echo "Failed to commit images"
-          echo "images_committed=false" >> $GITHUB_OUTPUT
           exit 0
-        }
+        fi
         
         # Push with retry logic
         echo "Pushing to origin/$BRANCH_NAME..."
@@ -345,7 +349,6 @@ jobs:
           echo "images_committed=true" >> $GITHUB_OUTPUT
           echo "Successfully committed and pushed images"
         else
-          echo "images_committed=false" >> $GITHUB_OUTPUT
           echo "Failed to push images after 3 attempts"
           exit 0
         fi
@@ -402,6 +405,15 @@ jobs:
             console.log(`Image accessibility check failed: ${error.message}`);
             core.setOutput('images_accessible', 'false');
           }
+
+    - name: Debug outputs before commenting
+      run: |
+        echo "=== Debug Step Outputs ==="
+        echo "changes_detected: '${{ steps.compare.outputs.changes_detected }}'"
+        echo "images_committed: '${{ steps.commit_images.outputs.images_committed }}'"
+        echo "changed_images: '${{ steps.compare.outputs.changed_images }}'"
+        echo "branch_name: '${{ steps.commit_images.outputs.branch_name }}'"
+        echo "========================="
 
     - name: Comment PR with results
       if: steps.compare.outputs.changes_detected == 'true' && steps.commit_images.outputs.images_committed == 'true'
