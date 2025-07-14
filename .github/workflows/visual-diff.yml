@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        scenario: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_scenario == 'all' && fromJson('["baseline", "changed", "mixed"]') || github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.test_scenario)) || fromJson('["baseline"]') }}
+        scenario: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_scenario == 'all' && fromJson('["baseline", "changed", "mixed"]') || github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.test_scenario)) || fromJson('["baseline", "changed", "mixed"]') }}
     
     steps:
     - name: Checkout code
