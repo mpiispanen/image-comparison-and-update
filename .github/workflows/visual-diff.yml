@@ -3,6 +3,17 @@ name: Visual Diff and PR Report
 on:
   pull_request:
     types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      test_scenario:
+        description: 'Test scenario to run'
+        required: false
+        default: 'baseline'
+        type: choice
+        options:
+          - baseline
+          - changed
+          - mixed
 
 permissions:
   contents: write
@@ -45,6 +56,15 @@ jobs:
     
     - name: Generate test outputs
       run: |
+        # Set test scenario - use input if manually triggered, otherwise default
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          export TEST_SCENARIO="${{ github.event.inputs.test_scenario }}"
+        else
+          export TEST_SCENARIO="baseline"
+        fi
+        
+        echo "Running test scenario: $TEST_SCENARIO"
+        
         # Run the application's test suite to generate output images
         python generate_test_images.py
     
@@ -423,36 +443,41 @@ jobs:
           const fs = require('fs');
           const report = fs.readFileSync('comparison_report.md', 'utf8');
           
-          // Find existing bot comment
+          // Clean up old bot comments first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.issue.number
           });
           
-          const botComment = comments.data.find(comment => 
+          const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
             (comment.body.includes('Visual Regression Test Results') ||
-             comment.body.includes('Visual differences detected'))
+             comment.body.includes('Visual differences detected') ||
+             comment.body.includes('All visual tests passed'))
           );
           
-          if (botComment) {
-            // Update existing comment
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body: report
-            });
-          } else {
-            // Create new comment
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: report
-            });
+          // Delete old bot comments to avoid confusion
+          for (const comment of botComments) {
+            try {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id
+              });
+              console.log(`Deleted old bot comment: ${comment.id}`);
+            } catch (error) {
+              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
+            }
           }
+          
+          // Always create a new comment
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: report
+          });
 
     - name: Comment PR with commit failure
       if: steps.compare.outputs.changes_detected == 'true' && steps.commit_images.outputs.images_committed != 'true'
@@ -491,36 +516,41 @@ jobs:
           
           **Debug info:** Images could not be committed to the repository for direct display. This may be due to branch protection rules or permissions.`;
           
-          // Find existing bot comment
+          // Clean up old bot comments first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.issue.number
           });
           
-          const botComment = comments.data.find(comment => 
+          const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
             (comment.body.includes('Visual Regression Test Results') || 
-             comment.body.includes('Visual differences detected'))
+             comment.body.includes('Visual differences detected') ||
+             comment.body.includes('All visual tests passed'))
           );
           
-          if (botComment) {
-            // Update existing comment
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body: report
-            });
-          } else {
-            // Create new comment
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: report
-            });
+          // Delete old bot comments to avoid confusion
+          for (const comment of botComments) {
+            try {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id
+              });
+              console.log(`Deleted old bot comment: ${comment.id}`);
+            } catch (error) {
+              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
+            }
           }
+          
+          // Always create a new comment
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: report
+          });
     
     - name: Comment PR with success
       if: steps.compare.outputs.changes_detected == 'false'
@@ -529,37 +559,41 @@ jobs:
         script: |
           const report = "✅ **All visual tests passed!** No differences detected.";
           
-          // Find existing bot comment
+          // Clean up old bot comments first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.issue.number
           });
           
-          const botComment = comments.data.find(comment => 
+          const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
             (comment.body.includes('Visual Regression Test Results') ||
              comment.body.includes('Visual differences detected') ||
              comment.body.includes('All visual tests passed'))
           );
           
-          if (botComment) {
-            // Update existing comment
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: botComment.id,
-              body: report
-            });
-          } else {
-            // Create new comment
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: report
-            });
+          // Delete old bot comments to avoid confusion
+          for (const comment of botComments) {
+            try {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id
+              });
+              console.log(`Deleted old bot comment: ${comment.id}`);
+            } catch (error) {
+              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
+            }
           }
+          
+          // Always create a new comment
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: report
+          });
 
     - name: Cleanup temporary images
       if: always() && steps.commit_images.outputs.images_committed == 'true'

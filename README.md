@@ -61,6 +61,38 @@ To accept this change, comment: `/accept-image ui-main-screen.png`
 
 ## Usage
 
+### Test Scenarios
+
+The workflow supports different test scenarios to help verify both passing and failing cases:
+
+**Available scenarios:**
+- `baseline`: Generates consistent images that match golden masters (all tests pass)
+- `changed`: Generates modified images that differ from golden masters (all tests fail)  
+- `mixed`: Generates a mix where some images pass and some fail
+
+**Running scenarios:**
+
+1. **Via GitHub Actions UI** (recommended):
+   - Go to Actions → Visual Diff and PR Report → Run workflow
+   - Select the desired test scenario from the dropdown
+   - Click "Run workflow"
+
+2. **Via local testing**:
+   ```bash
+   # Run specific scenario
+   python test_scenarios.py baseline
+   python test_scenarios.py changed
+   python test_scenarios.py mixed
+   
+   # Run all scenarios
+   python test_scenarios.py
+   ```
+
+3. **Via environment variable**:
+   ```bash
+   TEST_SCENARIO=changed python generate_test_images.py
+   ```
+
 ### Running Tests
 
 The workflow automatically runs `generate_test_images.py` to create test outputs. Customize this script for your application:
@@ -71,6 +103,14 @@ def run_your_tests():
     # Generate screenshots, renders, etc.
     save_image("outputs/ui-component.png", your_image_data)
 ```
+
+### Comment Behavior
+
+The workflow now creates **new comments** for each run instead of updating existing ones. Old bot comments are automatically cleaned up to prevent confusion. This ensures:
+
+- Each test run gets a fresh, timestamped comment
+- No confusion from outdated results
+- Clear history of test runs in the PR
 
 ### Accepting Changes
 
