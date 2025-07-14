@@ -112,7 +112,9 @@ See `generate_test_images.py` for a sample implementation that creates test imag
 
 ### Images Not Loading in PR Comments
 
-GitHub may need time to process LFS files. Wait a moment and refresh the PR.
+~~GitHub may need time to process LFS files. Wait a moment and refresh the PR.~~
+
+**Fixed:** The workflow now commits generated images temporarily to the repository and uses proper GitHub raw content URLs in PR comments. This ensures images display correctly without requiring external hosting or special GitHub processing time.
 
 ### Permission Denied on Accept
 
