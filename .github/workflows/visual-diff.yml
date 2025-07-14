@@ -188,8 +188,8 @@ jobs:
         echo "## Detailed Results" >> comparison_report.md
         echo "" >> comparison_report.md
         
-        # Note: Image URLs will be updated after upload to gist
-        echo "IMAGE_URLS_PLACEHOLDER" >> comparison_report.md
+        # Note: Images will be available in workflow artifacts for download
+        echo "ARTIFACT_DOWNLOAD_INFO" >> comparison_report.md
         
         # Set outputs for next steps
         echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
@@ -200,102 +200,6 @@ jobs:
           echo "✅ **All visual tests passed!** No differences detected." >> comparison_report.md
         fi
     
-    - name: Upload images to GitHub Gist
-      id: upload_images
-      if: steps.compare.outputs.changes_detected == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const path = require('path');
-          
-          console.log('Starting image upload to gist...');
-          
-          // Initialize outputs
-          core.setOutput('gist_created', 'false');
-          core.setOutput('gist_url', '');
-          
-          try {
-            // Collect all images that need to be uploaded
-            const filesToUpload = {};
-            
-            // Add output images
-            if (fs.existsSync('outputs')) {
-              const outputFiles = fs.readdirSync('outputs').filter(f => f.endsWith('.png'));
-              for (const file of outputFiles) {
-                const filePath = path.join('outputs', file);
-                const content = fs.readFileSync(filePath, { encoding: 'base64' });
-                filesToUpload[`outputs_${file}`] = {
-                  content: content
-                };
-                console.log(`Added output file: ${file}`);
-              }
-            }
-            
-            // Add diff images
-            if (fs.existsSync('diffs')) {
-              const diffFiles = fs.readdirSync('diffs').filter(f => f.endsWith('.png'));
-              for (const file of diffFiles) {
-                const filePath = path.join('diffs', file);
-                const content = fs.readFileSync(filePath, { encoding: 'base64' });
-                filesToUpload[`diffs_${file}`] = {
-                  content: content
-                };
-                console.log(`Added diff file: ${file}`);
-              }
-            }
-            
-            if (Object.keys(filesToUpload).length === 0) {
-              console.log('No images to upload');
-              return;
-            }
-            
-            // Create a gist with the images
-            const gistData = {
-              description: `Visual regression test results - PR #${{ github.event.pull_request.number || 'manual' }} - Scenario: ${{ matrix.scenario }} - ${new Date().toISOString()}`,
-              public: false, // Private gist but images will be accessible via direct URLs
-              files: filesToUpload
-            };
-            
-            console.log(`Creating gist with ${Object.keys(filesToUpload).length} files...`);
-            
-            const gist = await github.rest.gists.create(gistData);
-            
-            console.log(`Gist created successfully: ${gist.data.html_url}`);
-            console.log(`Gist ID: ${gist.data.id}`);
-            
-            // Store gist information
-            core.setOutput('gist_created', 'true');
-            core.setOutput('gist_url', gist.data.html_url);
-            core.setOutput('gist_id', gist.data.id);
-            
-            // Create a mapping of original file names to gist raw URLs
-            const imageUrls = {};
-            for (const [gistFileName, fileData] of Object.entries(gist.data.files)) {
-              const rawUrl = fileData.raw_url;
-              console.log(`Image URL: ${gistFileName} -> ${rawUrl}`);
-              
-              // Map back to original file structure
-              if (gistFileName.startsWith('outputs_')) {
-                const originalName = gistFileName.replace('outputs_', '');
-                imageUrls[`outputs/${originalName}`] = rawUrl;
-              } else if (gistFileName.startsWith('diffs_')) {
-                const originalName = gistFileName.replace('diffs_', '');
-                imageUrls[`diffs/${originalName}`] = rawUrl;
-              }
-            }
-            
-            // Store the URL mapping as JSON for later use
-            fs.writeFileSync('image_urls.json', JSON.stringify(imageUrls, null, 2));
-            
-            console.log('Image URLs mapping saved to image_urls.json');
-            
-          } catch (error) {
-            console.error(`Failed to create gist: ${error.message}`);
-            console.error(error.stack);
-            core.setOutput('gist_created', 'false');
-          }
-
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -303,203 +207,37 @@ jobs:
         path: |
           outputs/
           diffs/
+          golden/
+          comparison_report.md
         retention-days: 30
     
-    - name: Update comparison report with gist URLs
-      if: steps.upload_images.outputs.gist_created == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
+    - name: Generate comprehensive comparison report
+      id: generate_report
+      run: |
+        # Read the current comparison report
+        if [ -f comparison_report.md ]; then
+          # Update the comparison report with artifact download information
+          sed -i 's/ARTIFACT_DOWNLOAD_INFO/## 🖼️ Image Files Available for Download\n\nSince images cannot be directly displayed in GitHub PR comments, all comparison images are available in the workflow artifacts:\n\n📦 **[Download Complete Results](https:\/\/github.com\/${{ github.repository }}\/actions\/runs\/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`outputs\/`** - New test images generated by your changes\n- **`diffs\/`** - Visual difference highlights (red areas show changes)\n- **`golden\/`** - Current golden master images for comparison\n- **`comparison_report.md`** - This detailed comparison report\n\n### Manual Review Process:\n1. Click the download link above\n2. Download the `visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}` artifact\n3. Extract the ZIP file to access all images\n4. Compare files side by side:\n   - `outputs\/image-name.png` (your new version)\n   - `golden\/image-name.png` (current golden master)\n   - `diffs\/diff_image-name.png` (highlighted differences)\n5. If changes are intentional, use `\/accept-image <filename>` to update golden masters/' comparison_report.md
           
-          // Read the image URLs mapping
-          const imageUrls = JSON.parse(fs.readFileSync('image_urls.json', 'utf8'));
-          
-          // Read the current comparison report
-          let report = fs.readFileSync('comparison_report.md', 'utf8');
-          
-          // Build the detailed results section with actual image URLs
-          let detailedResults = '';
-          
-          // Add fallback note
-          detailedResults += '> **Note**: Images are hosted on GitHub Gist for reliable display. If images don\'t display properly, please download the [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) to view them locally.\n\n';
-          
-          // Process each output image for detailed reports
-          const outputFiles = fs.existsSync('outputs') ? fs.readdirSync('outputs').filter(f => f.endsWith('.png')) : [];
-          
-          for (const filename of outputFiles) {
-            const outputPath = `outputs/${filename}`;
-            const goldenPath = `golden/${filename}`;
-            
-            if (!fs.existsSync(goldenPath)) {
-              // New image - no golden master exists
-              const imageUrl = imageUrls[outputPath];
-              if (imageUrl) {
-                detailedResults += `### 🆕 **New Image:** \`${filename}\`\n\n`;
-                detailedResults += '| New Output |\n';
-                detailedResults += '|------------|\n';
-                detailedResults += `| ![New Output](${imageUrl}) |\n\n`;
-                detailedResults += `To accept this new image as the golden master, comment: \`/accept-image ${filename}\`\n\n`;
-              }
-            } else {
-              // Check if there are differences (look for corresponding diff file)
-              const basenameName = filename.replace('.png', '');
-              const diffFilename = `diff_${basenameName}.png`;
-              const diffPath = `diffs/${diffFilename}`;
-              
-              if (imageUrls[diffPath]) {
-                // There are differences
-                const outputImageUrl = imageUrls[outputPath];
-                const diffImageUrl = imageUrls[diffPath];
-                
-                if (outputImageUrl && diffImageUrl) {
-                  detailedResults += `### 🔄 **Changed Image:** \`${filename}\`\n\n`;
-                  
-                  // Add FLIP statistics if available (we'll add this info to the summary already)
-                  detailedResults += '| Difference | New Output |\n';
-                  detailedResults += '|------------|------------|\n';
-                  detailedResults += `| ![Difference](${diffImageUrl}) | ![New Output](${outputImageUrl}) |\n\n`;
-                  detailedResults += `To accept this change, comment: \`/accept-image ${filename}\`\n\n`;
-                }
-              }
-            }
-          }
-          
-          // Replace the placeholder with actual detailed results
-          report = report.replace('IMAGE_URLS_PLACEHOLDER', detailedResults);
-          
-          // Write the updated report
-          fs.writeFileSync('comparison_report.md', report);
-          
-          console.log('Updated comparison report with gist URLs');
-
-    - name: Verify image accessibility
-      id: verify_images
-      if: steps.upload_images.outputs.gist_created == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const https = require('https');
-          const fs = require('fs');
-          
-          try {
-            // Read the image URLs mapping
-            const imageUrls = JSON.parse(fs.readFileSync('image_urls.json', 'utf8'));
-            
-            // Test accessibility of one image URL
-            const testUrls = Object.values(imageUrls);
-            if (testUrls.length > 0) {
-              const testUrl = testUrls[0];
-              console.log(`Testing image accessibility: ${testUrl}`);
-              
-              // Make a HEAD request to check if the image is accessible
-              const response = await fetch(testUrl, { method: 'HEAD' });
-              if (response.ok) {
-                console.log('Images are accessible via gist URLs');
-                core.setOutput('images_accessible', 'true');
-              } else {
-                console.log(`Image accessibility test failed: ${response.status}`);
-                core.setOutput('images_accessible', 'false');
-              }
-            } else {
-              console.log('No image URLs to test');
-              core.setOutput('images_accessible', 'false');
-            }
-          } catch (error) {
-            console.log(`Image accessibility check failed: ${error.message}`);
-            core.setOutput('images_accessible', 'false');
-          }
-
+          echo "Enhanced comparison report generated"
+        else
+          echo "No comparison report found"
+        fi
+    
     - name: Debug outputs before commenting
       run: |
         echo "=== Debug Step Outputs ==="
         echo "changes_detected: '${{ steps.compare.outputs.changes_detected }}'"
-        echo "gist_created: '${{ steps.upload_images.outputs.gist_created }}'"
-        echo "gist_url: '${{ steps.upload_images.outputs.gist_url }}'"
         echo "changed_images: '${{ steps.compare.outputs.changed_images }}'"
-        echo "images_accessible: '${{ steps.verify_images.outputs.images_accessible }}'"
         echo "========================="
 
     - name: Comment PR with results
-      if: steps.compare.outputs.changes_detected == 'true' && steps.upload_images.outputs.gist_created == 'true'
+      if: steps.compare.outputs.changes_detected == 'true'
       uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');
           const report = fs.readFileSync('comparison_report.md', 'utf8');
-          
-          // Clean up old bot comments for this scenario first
-          const comments = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number
-          });
-          
-          const botComments = comments.data.filter(comment => 
-            comment.user.type === 'Bot' && 
-            (comment.body.includes('Visual Regression Test Results - Scenario: ${{ matrix.scenario }}') ||
-             (comment.body.includes('Visual Regression Test Results') && 
-              comment.body.includes('Scenario: ${{ matrix.scenario }}')))
-          );
-          
-          // Delete old bot comments to avoid confusion
-          for (const comment of botComments) {
-            try {
-              await github.rest.issues.deleteComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: comment.id
-              });
-              console.log(`Deleted old bot comment: ${comment.id}`);
-            } catch (error) {
-              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
-            }
-          }
-          
-          // Always create a new comment
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-            body: report
-          });
-
-    - name: Comment PR with upload failure
-      if: steps.compare.outputs.changes_detected == 'true' && steps.upload_images.outputs.gist_created != 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          
-          // Try to generate a report using artifact links
-          let report = `❌ **Visual differences detected - Scenario: ${{ matrix.scenario }}**\n\n`;
-          
-          // Check if we have a comparison report
-          if (fs.existsSync('comparison_report.md')) {
-            const baseReport = fs.readFileSync('comparison_report.md', 'utf8');
-            
-            // Use the base report but without image URLs since gist creation failed
-            const modifiedReport = baseReport
-              .replace(/IMAGE_URLS_PLACEHOLDER/g, 
-                       '🖼️ **Images available in artifacts** (gist upload failed)\n\nPlease download the workflow artifacts to view the images.')
-              .replace(/!\[([^\]]*)\]\([^)]+\)/g, '🖼️ **$1** (see artifact download below)');
-            
-            report += modifiedReport + '\n\n';
-          }
-          
-          report += `⚠️ **Images could not be uploaded to gist for direct display**
-          
-          The images are available for download from the workflow artifacts:
-          
-          📦 **Download artifacts:** [visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          
-          **Next steps:**
-          1. Click the artifact link above
-          2. Download the \`visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}\` artifact
-          3. Extract and review the images in the \`outputs/\` and \`diffs/\` folders
-          4. Use \`/accept-image <filename>\` to accept any changes
-          
-          **Debug info:** Image upload to gist failed. This may be due to GitHub API limits or permissions.`;
           
           // Clean up old bot comments for this scenario first
           const comments = await github.rest.issues.listComments({
