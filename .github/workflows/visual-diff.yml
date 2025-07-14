@@ -8,9 +8,10 @@ on:
       test_scenario:
         description: 'Test scenario to run'
         required: false
-        default: 'baseline'
+        default: 'all'
         type: choice
         options:
+          - all
           - baseline
           - changed
           - mixed
@@ -23,6 +24,9 @@ permissions:
 jobs:
   visual-diff:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        scenario: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_scenario == 'all' && fromJson('["baseline", "changed", "mixed"]') || github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.test_scenario)) || fromJson('["baseline"]') }}
     
     steps:
     - name: Checkout code
@@ -56,12 +60,8 @@ jobs:
     
     - name: Generate test outputs
       run: |
-        # Set test scenario - use input if manually triggered, otherwise default
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          export TEST_SCENARIO="${{ github.event.inputs.test_scenario }}"
-        else
-          export TEST_SCENARIO="baseline"
-        fi
+        # Use the matrix scenario value
+        export TEST_SCENARIO="${{ matrix.scenario }}"
         
         echo "Running test scenario: $TEST_SCENARIO"
         
@@ -76,7 +76,9 @@ jobs:
         CHANGES_DETECTED=false
         
         # Create comparison report with summary table
-        echo "# Visual Regression Test Results" > comparison_report.md
+        echo "# Visual Regression Test Results - Scenario: ${{ matrix.scenario }}" > comparison_report.md
+        echo "" >> comparison_report.md
+        echo "**Test Scenario:** \`${{ matrix.scenario }}\` - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
         echo "" >> comparison_report.md
         echo "## Summary" >> comparison_report.md
         echo "" >> comparison_report.md
@@ -376,7 +378,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: visual-test-results-${{ github.event.pull_request.number }}
+        name: visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}
         path: |
           outputs/
           diffs/
@@ -443,7 +445,7 @@ jobs:
           const fs = require('fs');
           const report = fs.readFileSync('comparison_report.md', 'utf8');
           
-          // Clean up old bot comments first
+          // Clean up old bot comments for this scenario first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
@@ -452,9 +454,9 @@ jobs:
           
           const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
-            (comment.body.includes('Visual Regression Test Results') ||
-             comment.body.includes('Visual differences detected') ||
-             comment.body.includes('All visual tests passed'))
+            (comment.body.includes('Visual Regression Test Results - Scenario: ${{ matrix.scenario }}') ||
+             (comment.body.includes('Visual Regression Test Results') && 
+              comment.body.includes('Scenario: ${{ matrix.scenario }}')))
           );
           
           // Delete old bot comments to avoid confusion
@@ -506,17 +508,17 @@ jobs:
           
           The images are available for download from the workflow artifacts:
           
-          📦 **Download artifacts:** [visual-test-results-${{ github.event.pull_request.number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          📦 **Download artifacts:** [visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           
           **Next steps:**
           1. Click the artifact link above
-          2. Download the \`visual-test-results-${{ github.event.pull_request.number }}\` artifact
+          2. Download the \`visual-test-results-${{ matrix.scenario }}-${{ github.event.pull_request.number || github.run_number }}\` artifact
           3. Extract and review the images in the \`outputs/\` and \`diffs/\` folders
           4. Use \`/accept-image <filename>\` to accept any changes
           
           **Debug info:** Images could not be committed to the repository for direct display. This may be due to branch protection rules or permissions.`;
           
-          // Clean up old bot comments first
+          // Clean up old bot comments for this scenario first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
@@ -525,9 +527,9 @@ jobs:
           
           const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
-            (comment.body.includes('Visual Regression Test Results') || 
-             comment.body.includes('Visual differences detected') ||
-             comment.body.includes('All visual tests passed'))
+            (comment.body.includes('Visual Regression Test Results - Scenario: ${{ matrix.scenario }}') ||
+             (comment.body.includes('Visual Regression Test Results') && 
+              comment.body.includes('Scenario: ${{ matrix.scenario }}')))
           );
           
           // Delete old bot comments to avoid confusion
@@ -557,9 +559,9 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const report = "✅ **All visual tests passed!** No differences detected.";
+          const report = "✅ **Visual tests passed for scenario \`${{ matrix.scenario }}\`!** No differences detected.\n\n**Test Scenario:** \`${{ matrix.scenario }}\` - " + new Date().toISOString().replace('T', ' ').substr(0, 19) + " UTC";
           
-          // Clean up old bot comments first
+          // Clean up old bot comments for this scenario first
           const comments = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
@@ -568,9 +570,10 @@ jobs:
           
           const botComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
-            (comment.body.includes('Visual Regression Test Results') ||
-             comment.body.includes('Visual differences detected') ||
-             comment.body.includes('All visual tests passed'))
+            (comment.body.includes('Visual Regression Test Results - Scenario: ${{ matrix.scenario }}') ||
+             comment.body.includes('Visual tests passed for scenario `${{ matrix.scenario }}`') ||
+             (comment.body.includes('Visual Regression Test Results') && 
+              comment.body.includes('Scenario: ${{ matrix.scenario }}')))
           );
           
           // Delete old bot comments to avoid confusion
