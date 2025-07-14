@@ -111,8 +111,13 @@ jobs:
         # Move the image to golden directory
         cp "artifacts/outputs/$IMAGE_NAME" "golden/$IMAGE_NAME"
         
-        # Add and commit the change
+        # Clean up temporary artifacts from the repository (if they exist)
+        rm -f "outputs/$IMAGE_NAME" 2>/dev/null || true
+        rm -f "diffs/diff_$(basename "$IMAGE_NAME" .png).png" 2>/dev/null || true
+        
+        # Add and commit the changes
         git add "golden/$IMAGE_NAME"
+        git add -u outputs/ diffs/ 2>/dev/null || true  # Remove deleted files
         
         # Check if there are changes to commit
         if git diff --staged --quiet; then

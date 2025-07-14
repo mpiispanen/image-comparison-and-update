@@ -181,7 +181,7 @@ jobs:
             echo "" >> comparison_report.md
             echo "| New Output |" >> comparison_report.md
             echo "|------------|" >> comparison_report.md
-            echo "| ![New Output](./outputs/$filename) |" >> comparison_report.md
+            echo "| ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/outputs/$filename) |" >> comparison_report.md
             echo "" >> comparison_report.md
             echo "To accept this new image as the golden master, comment: \`/accept-image $filename\`" >> comparison_report.md
             echo "" >> comparison_report.md
@@ -227,7 +227,7 @@ jobs:
                 echo "" >> comparison_report.md
                 echo "| Difference | New Output |" >> comparison_report.md
                 echo "|------------|------------|" >> comparison_report.md
-                echo "| ![Difference](./diffs/${diff_basename}.png) | ![New Output](./outputs/$filename) |" >> comparison_report.md
+                echo "| ![Difference](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/diffs/${diff_basename}.png) | ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/outputs/$filename) |" >> comparison_report.md
                 echo "" >> comparison_report.md
                 echo "To accept this change, comment: \`/accept-image $filename\`" >> comparison_report.md
                 echo "" >> comparison_report.md
@@ -245,6 +245,24 @@ jobs:
           echo "✅ **All visual tests passed!** No differences detected." >> comparison_report.md
         fi
     
+    - name: Commit images for PR display
+      run: |
+        # Configure git for committing
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Create a temporary branch for artifacts or use the PR branch
+        git checkout ${{ github.head_ref }}
+        
+        # Add the generated images to git (temporarily for display purposes)
+        git add outputs/ diffs/ || true
+        
+        # Only commit if there are changes
+        if ! git diff --staged --quiet; then
+          git commit -m "temp: Add visual diff artifacts for PR display [skip ci]"
+          git push origin ${{ github.head_ref }}
+        fi
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
