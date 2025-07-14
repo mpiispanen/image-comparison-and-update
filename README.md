@@ -112,13 +112,27 @@ See `generate_test_images.py` for a sample implementation that creates test imag
 
 ### Images Not Loading in PR Comments
 
-~~GitHub may need time to process LFS files. Wait a moment and refresh the PR.~~
+The workflow now commits generated images temporarily to the repository and uses proper GitHub raw content URLs in PR comments. This ensures images display correctly without requiring external hosting.
 
-**Fixed:** The workflow now commits generated images temporarily to the repository and uses proper GitHub raw content URLs in PR comments. This ensures images display correctly without requiring external hosting or special GitHub processing time.
+**If images still don't display:**
+1. Check if the "Commit images for PR display" step succeeded in the workflow logs
+2. Verify the repository permissions allow the workflow to push commits
+3. For private repositories, ensure raw.githubusercontent.com URLs are accessible
+4. Download the workflow artifacts as a fallback to view images locally
+
+**Error message:** "Visual differences detected but images could not be displayed"
+- This indicates the commit step failed
+- Check workflow logs for git push errors
+- Verify branch protection rules allow automated commits
+- Use the artifact download link provided in the comment
 
 ### Permission Denied on Accept
 
 Ensure the user commenting has write access to the repository.
+
+**Error message:** "does not have write permissions to accept images"
+- Only repository collaborators with write or admin access can accept images
+- Check repository settings → Manage access
 
 ### Workflow Not Triggering
 
@@ -126,3 +140,22 @@ Check that:
 - The PR has changes that would generate new output images
 - The `generate_test_images.py` script runs successfully
 - Artifacts are being uploaded correctly
+
+### Git LFS Issues
+
+**Large repository size:**
+- Ensure `.gitattributes` is configured correctly
+- Verify LFS is tracking image files: `git lfs ls-files`
+- Clean up old LFS objects: `git lfs prune`
+
+**LFS file not found:**
+- Run `git lfs pull` to download LFS files
+- Check LFS quota in repository settings
+
+### Debug Steps
+
+1. **Check workflow logs** for detailed error messages
+2. **Download artifacts** manually to verify image generation
+3. **Test locally** by running `generate_test_images.py`
+4. **Verify permissions** using repository settings
+5. **Check branch protection** rules that might block automated commits

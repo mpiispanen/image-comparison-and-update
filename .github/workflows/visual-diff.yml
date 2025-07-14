@@ -262,10 +262,21 @@ jobs:
     
     - name: Commit images for PR display
       id: commit_images
+      continue-on-error: true
       run: |
+        set -e
+        
         # Configure git for committing
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Debug: Show current git status
+        echo "=== Git Status Debug ==="
+        git status
+        echo "Current branch: $(git branch --show-current)"
+        echo "Remote branches:"
+        git branch -r
+        echo "========================"
         
         # Get the correct branch reference - use the PR branch
         BRANCH_NAME="${{ github.head_ref }}"
@@ -273,31 +284,70 @@ jobs:
           BRANCH_NAME="${{ github.ref_name }}"
         fi
         
-        echo "Using branch: $BRANCH_NAME"
+        echo "Target branch: $BRANCH_NAME"
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
         
+        # Check what files we have to commit
+        echo "=== Files to commit ==="
+        ls -la outputs/ || echo "No outputs directory"
+        ls -la diffs/ || echo "No diffs directory"
+        echo "======================="
+        
         # Ensure we're on the correct branch
-        git checkout "$BRANCH_NAME" || git checkout -b "$BRANCH_NAME"
+        if git show-ref --verify --quiet refs/heads/"$BRANCH_NAME"; then
+          echo "Branch $BRANCH_NAME exists locally, checking out"
+          git checkout "$BRANCH_NAME"
+        elif git show-ref --verify --quiet refs/remotes/origin/"$BRANCH_NAME"; then
+          echo "Branch $BRANCH_NAME exists remotely, checking out"
+          git checkout -b "$BRANCH_NAME" origin/"$BRANCH_NAME"
+        else
+          echo "Creating new branch $BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME"
+        fi
         
         # Add the generated images to git (temporarily for display purposes)
-        git add outputs/ diffs/ || true
+        echo "Adding images to git..."
+        git add outputs/ diffs/ || {
+          echo "Failed to add images to git"
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          exit 0
+        }
         
-        # Only commit if there are changes
-        if ! git diff --staged --quiet; then
-          git commit -m "temp: Add visual diff artifacts for PR display [skip ci]"
-          
-          # Push and verify success
+        # Check if there are any changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        # Commit the changes
+        echo "Committing images..."
+        git commit -m "temp: Add visual diff artifacts for PR display [skip ci]" || {
+          echo "Failed to commit images"
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          exit 0
+        }
+        
+        # Push with retry logic
+        echo "Pushing to origin/$BRANCH_NAME..."
+        PUSH_SUCCESS=false
+        for i in {1..3}; do
           if git push origin "$BRANCH_NAME"; then
-            echo "images_committed=true" >> $GITHUB_OUTPUT
-            echo "Successfully committed and pushed images"
+            PUSH_SUCCESS=true
+            break
           else
-            echo "images_committed=false" >> $GITHUB_OUTPUT
-            echo "Failed to push images"
-            exit 1
+            echo "Push attempt $i failed, retrying in 5 seconds..."
+            sleep 5
           fi
+        done
+        
+        if [ "$PUSH_SUCCESS" = "true" ]; then
+          echo "images_committed=true" >> $GITHUB_OUTPUT
+          echo "Successfully committed and pushed images"
         else
           echo "images_committed=false" >> $GITHUB_OUTPUT
-          echo "No images to commit"
+          echo "Failed to push images after 3 attempts"
+          exit 0
         fi
 
     - name: Upload artifacts
@@ -309,6 +359,50 @@ jobs:
           diffs/
         retention-days: 30
     
+    - name: Verify image accessibility
+      id: verify_images
+      if: steps.commit_images.outputs.images_committed == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const branch = '${{ steps.commit_images.outputs.branch_name }}';
+          const repo = context.repo;
+          
+          // Test if we can access the committed images via GitHub API
+          try {
+            // Try to get a sample output file to verify accessibility
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Check what images we have
+            let testFile = null;
+            if (fs.existsSync('outputs')) {
+              const outputFiles = fs.readdirSync('outputs').filter(f => f.endsWith('.png'));
+              if (outputFiles.length > 0) {
+                testFile = `outputs/${outputFiles[0]}`;
+              }
+            }
+            
+            if (testFile) {
+              // Try to get the file from the repository
+              const response = await github.rest.repos.getContent({
+                owner: repo.owner,
+                repo: repo.repo,
+                path: testFile,
+                ref: branch
+              });
+              
+              console.log(`Successfully verified image accessibility: ${testFile}`);
+              core.setOutput('images_accessible', 'true');
+            } else {
+              console.log('No test files found to verify');
+              core.setOutput('images_accessible', 'false');
+            }
+          } catch (error) {
+            console.log(`Image accessibility check failed: ${error.message}`);
+            core.setOutput('images_accessible', 'false');
+          }
+
     - name: Comment PR with results
       if: steps.compare.outputs.changes_detected == 'true' && steps.commit_images.outputs.images_committed == 'true'
       uses: actions/github-script@v7
@@ -326,7 +420,8 @@ jobs:
           
           const botComment = comments.data.find(comment => 
             comment.user.type === 'Bot' && 
-            comment.body.includes('Visual Regression Test Results')
+            (comment.body.includes('Visual Regression Test Results') ||
+             comment.body.includes('Visual differences detected'))
           );
           
           if (botComment) {
@@ -352,31 +447,37 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const report = `❌ **Visual differences detected but images could not be displayed**
+          const fs = require('fs');
           
-          Visual regression testing found differences, but there was an issue committing the images to display them in this PR comment.
+          // Try to generate a report using artifact links
+          let report = `❌ **Visual differences detected**\n\n`;
           
-          Please check the [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) to download and view the comparison images manually.
+          // Check if we have a comparison report
+          if (fs.existsSync('comparison_report.md')) {
+            const baseReport = fs.readFileSync('comparison_report.md', 'utf8');
+            
+            // Replace GitHub raw URLs with artifact download instructions
+            const modifiedReport = baseReport
+              .replace(/!\[([^\]]*)\]\(https:\/\/raw\.githubusercontent\.com\/[^)]+\)/g, 
+                       '🖼️ **$1** (see artifact download below)')
+              .replace(/\*\*Note\*\*:[^>]*>/g, '');
+            
+            report += modifiedReport + '\n\n';
+          }
+          
+          report += `⚠️ **Images could not be embedded directly in this comment**
+          
+          The images are available for download from the workflow artifacts:
+          
+          📦 **Download artifacts:** [visual-test-results-${{ github.event.pull_request.number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           
           **Next steps:**
-          1. Download the visual-test-results artifact from the workflow run
-          2. Review the images locally
-          3. Use \`/accept-image <filename>\` to accept any changes
-          `;
+          1. Click the artifact link above
+          2. Download the \`visual-test-results-${{ github.event.pull_request.number }}\` artifact
+          3. Extract and review the images in the \`outputs/\` and \`diffs/\` folders
+          4. Use \`/accept-image <filename>\` to accept any changes
           
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-            body: report
-          });
-    
-    - name: Comment PR with success
-      if: steps.compare.outputs.changes_detected == 'false'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const report = "✅ **All visual tests passed!** No differences detected.";
+          **Debug info:** Images could not be committed to the repository for direct display. This may be due to branch protection rules or permissions.`;
           
           // Find existing bot comment
           const comments = await github.rest.issues.listComments({
@@ -387,7 +488,8 @@ jobs:
           
           const botComment = comments.data.find(comment => 
             comment.user.type === 'Bot' && 
-            comment.body.includes('Visual Regression Test Results')
+            (comment.body.includes('Visual Regression Test Results') || 
+             comment.body.includes('Visual differences detected'))
           );
           
           if (botComment) {
@@ -407,3 +509,72 @@ jobs:
               body: report
             });
           }
+    
+    - name: Comment PR with success
+      if: steps.compare.outputs.changes_detected == 'false'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const report = "✅ **All visual tests passed!** No differences detected.";
+          
+          // Find existing bot comment
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+          
+          const botComment = comments.data.find(comment => 
+            comment.user.type === 'Bot' && 
+            (comment.body.includes('Visual Regression Test Results') ||
+             comment.body.includes('Visual differences detected') ||
+             comment.body.includes('All visual tests passed'))
+          );
+          
+          if (botComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: report
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: report
+            });
+          }
+
+    - name: Cleanup temporary images
+      if: always() && steps.commit_images.outputs.images_committed == 'true'
+      continue-on-error: true
+      run: |
+        # Clean up the temporary images that were committed for display purposes
+        # This step runs after the PR comment is posted to keep the repository clean
+        
+        BRANCH_NAME="${{ steps.commit_images.outputs.branch_name }}"
+        
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Ensure we're on the correct branch
+        git checkout "$BRANCH_NAME" 2>/dev/null || true
+        
+        # Remove the temporary directories
+        if [ -d "outputs" ] || [ -d "diffs" ]; then
+          echo "Cleaning up temporary image directories..."
+          git rm -rf outputs/ diffs/ 2>/dev/null || true
+          
+          # Only commit if there are changes
+          if ! git diff --staged --quiet; then
+            git commit -m "cleanup: Remove temporary visual diff artifacts [skip ci]"
+            git push origin "$BRANCH_NAME" || echo "Failed to push cleanup commit (non-critical)"
+          fi
+        fi
+        
+        echo "Cleanup completed"
