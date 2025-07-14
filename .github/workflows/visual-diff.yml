@@ -166,6 +166,20 @@ jobs:
         echo "## Detailed Results" >> comparison_report.md
         echo "" >> comparison_report.md
         
+        # Check if images will be available via GitHub raw URLs
+        BRANCH_NAME="${{ github.head_ref }}"
+        if [ -z "$BRANCH_NAME" ]; then
+          BRANCH_NAME="${{ github.ref_name }}"
+        fi
+        
+        # Store branch name for later use
+        echo "REPORT_BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+        
+        # Add fallback note for private repositories
+        echo "" >> comparison_report.md
+        echo "> **Note**: If images don't display properly, the repository may be private or there may be access issues. In that case, please download the [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) to view the images locally." >> comparison_report.md
+        echo "" >> comparison_report.md
+        
         # Process each output image again for detailed reports
         for output_file in outputs/*.png; do
           if [ ! -f "$output_file" ]; then
@@ -182,7 +196,7 @@ jobs:
             echo "" >> comparison_report.md
             echo "| New Output |" >> comparison_report.md
             echo "|------------|" >> comparison_report.md
-            echo "| ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/outputs/$filename) |" >> comparison_report.md
+            echo "| ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/$REPORT_BRANCH_NAME/outputs/$filename) |" >> comparison_report.md
             echo "" >> comparison_report.md
             echo "To accept this new image as the golden master, comment: \`/accept-image $filename\`" >> comparison_report.md
             echo "" >> comparison_report.md
@@ -228,7 +242,7 @@ jobs:
                 echo "" >> comparison_report.md
                 echo "| Difference | New Output |" >> comparison_report.md
                 echo "|------------|------------|" >> comparison_report.md
-                echo "| ![Difference](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/diffs/${diff_basename}.png) | ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/outputs/$filename) |" >> comparison_report.md
+                echo "| ![Difference](https://raw.githubusercontent.com/${{ github.repository }}/$REPORT_BRANCH_NAME/diffs/${diff_basename}.png) | ![New Output](https://raw.githubusercontent.com/${{ github.repository }}/$REPORT_BRANCH_NAME/outputs/$filename) |" >> comparison_report.md
                 echo "" >> comparison_report.md
                 echo "To accept this change, comment: \`/accept-image $filename\`" >> comparison_report.md
                 echo "" >> comparison_report.md
@@ -247,13 +261,23 @@ jobs:
         fi
     
     - name: Commit images for PR display
+      id: commit_images
       run: |
         # Configure git for committing
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Create a temporary branch for artifacts or use the PR branch
-        git checkout ${{ github.head_ref }}
+        # Get the correct branch reference - use the PR branch
+        BRANCH_NAME="${{ github.head_ref }}"
+        if [ -z "$BRANCH_NAME" ]; then
+          BRANCH_NAME="${{ github.ref_name }}"
+        fi
+        
+        echo "Using branch: $BRANCH_NAME"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+        
+        # Ensure we're on the correct branch
+        git checkout "$BRANCH_NAME" || git checkout -b "$BRANCH_NAME"
         
         # Add the generated images to git (temporarily for display purposes)
         git add outputs/ diffs/ || true
@@ -261,7 +285,19 @@ jobs:
         # Only commit if there are changes
         if ! git diff --staged --quiet; then
           git commit -m "temp: Add visual diff artifacts for PR display [skip ci]"
-          git push origin ${{ github.head_ref }}
+          
+          # Push and verify success
+          if git push origin "$BRANCH_NAME"; then
+            echo "images_committed=true" >> $GITHUB_OUTPUT
+            echo "Successfully committed and pushed images"
+          else
+            echo "images_committed=false" >> $GITHUB_OUTPUT
+            echo "Failed to push images"
+            exit 1
+          fi
+        else
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          echo "No images to commit"
         fi
 
     - name: Upload artifacts
@@ -274,7 +310,7 @@ jobs:
         retention-days: 30
     
     - name: Comment PR with results
-      if: steps.compare.outputs.changes_detected == 'true'
+      if: steps.compare.outputs.changes_detected == 'true' && steps.commit_images.outputs.images_committed == 'true'
       uses: actions/github-script@v7
       with:
         script: |
@@ -310,6 +346,30 @@ jobs:
               body: report
             });
           }
+
+    - name: Comment PR with commit failure
+      if: steps.compare.outputs.changes_detected == 'true' && steps.commit_images.outputs.images_committed != 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const report = `❌ **Visual differences detected but images could not be displayed**
+          
+          Visual regression testing found differences, but there was an issue committing the images to display them in this PR comment.
+          
+          Please check the [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) to download and view the comparison images manually.
+          
+          **Next steps:**
+          1. Download the visual-test-results artifact from the workflow run
+          2. Review the images locally
+          3. Use \`/accept-image <filename>\` to accept any changes
+          `;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: report
+          });
     
     - name: Comment PR with success
       if: steps.compare.outputs.changes_detected == 'false'
