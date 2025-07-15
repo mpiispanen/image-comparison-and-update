@@ -375,27 +375,10 @@ jobs:
             echo "images_committed=true" >> $GITHUB_OUTPUT
             echo "✅ Successfully committed images to branch: $BRANCH_NAME"
             
-            # Debug: Verify images are accessible via HTTP URLs
-            echo "=== Debug: Verifying image accessibility via HTTP URLs ==="
+            # Debug: Verify images are accessible via HTTP URLs (for workflow debugging)
+            echo "=== Debug: Verifying image commit success ==="
             REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
-            
-            # Test a few sample images to ensure they're accessible
-            for test_file in golden/*.png outputs/*.png diffs/*.png; do
-              if [ -f "$test_file" ]; then
-                filename=$(basename "$test_file")
-                dir=$(dirname "$test_file")
-                test_url="$REPO_URL/$dir/$filename"
-                echo "🔗 Testing URL: $test_url"
-                
-                # Quick curl test (don't wait too long, just check if URL responds)
-                if curl -s -I "$test_url" --max-time 10 | grep -q "200 OK"; then
-                  echo "✅ URL responds: $test_url"
-                else
-                  echo "❌ URL failed or not ready yet: $test_url"
-                fi
-                break  # Just test one file per directory
-              fi
-            done
+            echo "Repository URL: $REPO_URL"
             echo "================================================================"
           else
             echo "images_committed=false" >> $GITHUB_OUTPUT
@@ -438,6 +421,8 @@ jobs:
             # Create image section
             echo "## 🖼️ Visual Comparison Results" > image_section.md
             echo "" >> image_section.md
+            echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> image_section.md
+            echo "" >> image_section.md
             echo "### Changed Images" >> image_section.md
             
             # Get list of image files from the changed_images output instead of filesystem
@@ -457,57 +442,18 @@ jobs:
                 golden_url="$REPO_URL/golden/$filename"
                 echo "**Golden Master (Expected):**" >> image_section.md
                 echo "![Golden Master]($golden_url)" >> image_section.md
-                echo "📍 **Golden URL:** $golden_url" >> image_section.md
-                
-                # Debug: Test golden image URL and content type
-                echo "🔍 Testing golden image URL: $golden_url"
-                curl_result=$(curl -s -I "$golden_url" --max-time 10 2>&1 || echo "CURL_FAILED")
-                if echo "$curl_result" | grep -q "200 OK"; then
-                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
-                  echo "✅ Golden image accessible - $content_type"
-                  echo "> ✅ **Golden image verified accessible**" >> image_section.md
-                else
-                  echo "❌ Golden image not accessible: $curl_result"
-                  echo "> ❌ **Golden image not accessible** - May still be processing" >> image_section.md
-                fi
                 echo "" >> image_section.md
                 
                 # Add new output
                 output_url="$REPO_URL/outputs/$filename"
                 echo "**New Output (Actual):**" >> image_section.md
                 echo "![New Output]($output_url)" >> image_section.md
-                echo "📍 **Output URL:** $output_url" >> image_section.md
-                
-                # Debug: Test output image URL
-                echo "🔍 Testing output image URL: $output_url"
-                curl_result=$(curl -s -I "$output_url" --max-time 10 2>&1 || echo "CURL_FAILED")
-                if echo "$curl_result" | grep -q "200 OK"; then
-                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
-                  echo "✅ Output image accessible - $content_type"
-                  echo "> ✅ **Output image verified accessible**" >> image_section.md
-                else
-                  echo "❌ Output image not accessible: $curl_result"
-                  echo "> ❌ **Output image not accessible** - May still be processing" >> image_section.md
-                fi
                 echo "" >> image_section.md
                 
                 # Add diff
                 diff_url="$REPO_URL/diffs/diff_$filename"
                 echo "**Visual Difference (Highlighted Changes):**" >> image_section.md
                 echo "![Difference]($diff_url)" >> image_section.md
-                echo "📍 **Diff URL:** $diff_url" >> image_section.md
-                
-                # Debug: Test diff image URL
-                echo "🔍 Testing diff image URL: $diff_url"
-                curl_result=$(curl -s -I "$diff_url" --max-time 10 2>&1 || echo "CURL_FAILED")
-                if echo "$curl_result" | grep -q "200 OK"; then
-                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
-                  echo "✅ Diff image accessible - $content_type"
-                  echo "> ✅ **Diff image verified accessible**" >> image_section.md
-                else
-                  echo "❌ Diff image not accessible: $curl_result"
-                  echo "> ❌ **Diff image not accessible** - May still be processing" >> image_section.md
-                fi
                 echo "" >> image_section.md
                 
                 echo "---" >> image_section.md
