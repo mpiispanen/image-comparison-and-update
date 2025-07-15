@@ -261,6 +261,18 @@ jobs:
     - name: Generate comprehensive comparison report with embedded images
       id: generate_report
       run: |
+        # Debug: Show current directory and file availability
+        echo "=== Debug: Current working directory and file status ==="
+        echo "PWD: $(pwd)"
+        echo "Current branch: $(git branch --show-current)"
+        echo "Files in outputs/:"
+        ls -la outputs/ || echo "outputs/ directory not found"
+        echo "Files in diffs/:"
+        ls -la diffs/ || echo "diffs/ directory not found"
+        echo "Files in golden/:"
+        ls -la golden/ || echo "golden/ directory not found"
+        echo "=============================================="
+        
         # Read the current comparison report
         if [ -f comparison_report.md ]; then
           BRANCH_NAME="${{ steps.commit_images.outputs.branch_name }}"
@@ -268,44 +280,52 @@ jobs:
           if [ "${{ steps.commit_images.outputs.images_committed }}" = "true" ]; then
             # Update the comparison report with embedded GitHub raw URLs
             REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
+            echo "=== Debug: Using repository URL: $REPO_URL ==="
             
             # Create image section
             echo "## 🖼️ Visual Comparison Results" > image_section.md
             echo "" >> image_section.md
             echo "### Changed Images" >> image_section.md
             
-            # Add embedded images for each changed file
-            for output_file in outputs/*.png; do
-              if [ -f "$output_file" ]; then
-                filename=$(basename "$output_file")
-                golden_file="golden/$filename"
-                diff_file="diffs/diff_$filename"
+            # Get list of image files from the changed_images output instead of filesystem
+            CHANGED_IMAGES="${{ steps.compare.outputs.changed_images }}"
+            echo "=== Debug: Changed images from comparison: '$CHANGED_IMAGES' ==="
+            
+            if [ -n "$CHANGED_IMAGES" ] && [ "$CHANGED_IMAGES" != " " ]; then
+              # Process each changed image
+              for filename in $CHANGED_IMAGES; do
+                echo "=== Debug: Processing image: $filename ==="
                 
                 echo "" >> image_section.md
                 echo "#### $filename" >> image_section.md
                 echo "" >> image_section.md
                 
-                # Add golden master if it exists
-                if [ -f "$golden_file" ]; then
-                  echo "**Golden Master (Expected):**" >> image_section.md
-                  echo "![Golden Master]($REPO_URL/golden/$filename)" >> image_section.md
-                  echo "" >> image_section.md
-                fi
-                
-                echo "**New Output (Actual):**" >> image_section.md
-                echo "![New Output]($REPO_URL/outputs/$filename)" >> image_section.md
+                # Add golden master if it would exist
+                golden_url="$REPO_URL/golden/$filename"
+                echo "**Golden Master (Expected):**" >> image_section.md
+                echo "![Golden Master]($golden_url)" >> image_section.md
+                echo "📍 **Golden URL:** $golden_url" >> image_section.md
                 echo "" >> image_section.md
                 
-                # Add diff if it exists
-                if [ -f "$diff_file" ]; then
-                  echo "**Visual Difference (Highlighted Changes):**" >> image_section.md
-                  echo "![Difference]($REPO_URL/diffs/diff_$filename)" >> image_section.md
-                  echo "" >> image_section.md
-                fi
+                # Add new output
+                output_url="$REPO_URL/outputs/$filename"
+                echo "**New Output (Actual):**" >> image_section.md
+                echo "![New Output]($output_url)" >> image_section.md
+                echo "📍 **Output URL:** $output_url" >> image_section.md
+                echo "" >> image_section.md
+                
+                # Add diff
+                diff_url="$REPO_URL/diffs/diff_$filename"
+                echo "**Visual Difference (Highlighted Changes):**" >> image_section.md
+                echo "![Difference]($diff_url)" >> image_section.md
+                echo "📍 **Diff URL:** $diff_url" >> image_section.md
+                echo "" >> image_section.md
                 
                 echo "---" >> image_section.md
-              fi
-            done
+              done
+            else
+              echo "No changed images found to display." >> image_section.md
+            fi
             
             echo "" >> image_section.md
             echo "### 📦 Backup Download" >> image_section.md
@@ -318,6 +338,7 @@ jobs:
             sed -i '/ARTIFACT_DOWNLOAD_INFO/d' comparison_report.md
             
           else
+            echo "=== Debug: Images were not committed, using fallback ==="
             # Fallback to artifact download if commit failed
             sed -i 's|ARTIFACT_DOWNLOAD_INFO|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`outputs/`** - New test images\n- **`diffs/`** - Visual differences\n- **`golden/`** - Golden master images\n- **`comparison_report.md`** - This report|' comparison_report.md
           fi
