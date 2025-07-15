@@ -319,7 +319,7 @@ jobs:
             
           else
             # Fallback to artifact download if commit failed
-            sed -i 's/ARTIFACT_DOWNLOAD_INFO/## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https:\/\/github.com\/${{ github.repository }}\/actions\/runs\/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`outputs\/`** - New test images\n- **`diffs\/`** - Visual differences\n- **`golden\/`** - Golden master images\n- **`comparison_report.md`** - This report/' comparison_report.md
+            sed -i 's|ARTIFACT_DOWNLOAD_INFO|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`outputs/`** - New test images\n- **`diffs/`** - Visual differences\n- **`golden/`** - Golden master images\n- **`comparison_report.md`** - This report|' comparison_report.md
           fi
           
           echo "Enhanced comparison report generated"
