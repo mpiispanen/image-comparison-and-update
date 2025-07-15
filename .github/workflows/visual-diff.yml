@@ -255,8 +255,31 @@ jobs:
         echo "=== Debug: Ensuring golden images are available ==="
         echo "Copying golden images from original branch..."
         git checkout "$ORIGINAL_BRANCH" -- golden/ || echo "No golden images to copy"
-        echo "Golden images after copy:"
+        
+        # Pull LFS content for golden images to ensure actual images (not pointers) are available
+        echo "Pulling LFS content for golden images..."
+        git lfs pull --include="golden/**" || echo "No LFS files to pull or LFS not available"
+        
+        echo "Golden images after copy and LFS pull:"
         ls -la golden/ || echo "golden/ directory not found"
+        
+        # Verify that golden images are actual images, not LFS pointers
+        if [ -f "golden/ui-main-screen.png" ]; then
+          echo "Checking if golden/ui-main-screen.png is an actual image or LFS pointer..."
+          if head -1 "golden/ui-main-screen.png" | grep -q "version https://git-lfs.github.com/spec/v1"; then
+            echo "❌ Golden image is still an LFS pointer - attempting to force pull..."
+            # Try to force pull the specific LFS files
+            git lfs pull --include="golden/ui-main-screen.png" || echo "Failed to pull LFS content"
+          else
+            echo "✅ Golden image appears to be actual image content"
+          fi
+        fi
+        
+        # For the temporary display branch, we want to store golden images as regular files (not LFS)
+        # Remove LFS tracking for this temporary branch to ensure images are stored directly
+        echo "Removing LFS tracking for golden images in temporary branch..."
+        git lfs untrack "golden/**/*.png" "golden/**/*.jpg" "golden/**/*.jpeg" 2>/dev/null || echo "LFS untrack completed"
+        
         echo "=============================================="
         
         # Add all generated images and verify what's being added
