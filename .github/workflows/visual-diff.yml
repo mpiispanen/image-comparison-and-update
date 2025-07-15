@@ -246,67 +246,55 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Ensure we have actual binary golden image data before creating temporary branch
-        echo "=== Debug: Ensuring golden image LFS content is available ==="
-        echo "Pulling LFS content in original branch to get actual binary data..."
-        git lfs pull --include="golden/**" || echo "No LFS files to pull or LFS not available"
-        
-        # Verify golden images contain actual binary data in original branch
-        echo "Verifying golden image content in original branch..."
-        for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
-          if [ -f "$golden_file" ]; then
-            if head -1 "$golden_file" | grep -q "version https://git-lfs.github.com/spec/v1"; then
-              echo "❌ $golden_file is still an LFS pointer in original branch"
-              echo "Attempting to force-pull LFS content..."
-              git lfs pull --include="$golden_file" || echo "Failed to pull $golden_file"
-            else
-              echo "✅ $golden_file contains actual image data in original branch"
-            fi
-          fi
-        done
-        
-        # Create temporary directory to store actual golden image binaries
-        TEMP_GOLDEN_DIR="/tmp/golden_images_$$"
-        mkdir -p "$TEMP_GOLDEN_DIR"
-        
-        # Copy actual binary files (not via git to avoid LFS pointers)
-        echo "Copying actual golden image binaries to temporary location..."
+        # Verify golden images are available and are actual binary files
+        echo "=== Debug: Verifying golden images are available ==="
         if [ -d "golden" ]; then
-          cp -r golden/* "$TEMP_GOLDEN_DIR/" || echo "No golden images to copy"
-          echo "Copied files to $TEMP_GOLDEN_DIR:"
-          ls -la "$TEMP_GOLDEN_DIR/" || echo "No files copied"
+          echo "Golden images found in original branch:"
+          ls -la golden/ || echo "No golden images in directory"
+          
+          # Verify they are actual binary files (not LFS pointers)
+          for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
+            if [ -f "$golden_file" ]; then
+              if head -1 "$golden_file" | grep -q "version https://git-lfs.github.com/spec/v1"; then
+                echo "❌ $golden_file is an LFS pointer - pulling actual content..."
+                git lfs pull --include="$golden_file" || echo "Failed to pull $golden_file"
+              else
+                echo "✅ $golden_file is actual binary image data"
+                ls -la "$golden_file"
+              fi
+            fi
+          done
+        else
+          echo "No golden directory found"
         fi
         
         # Create and switch to the temporary branch
         echo "Creating and switching to branch: $BRANCH_NAME"
         git checkout -b "$BRANCH_NAME"
         
-        # Copy the actual binary golden images to the temporary branch
-        echo "=== Debug: Adding golden images as regular files ==="
-        if [ -d "$TEMP_GOLDEN_DIR" ] && [ "$(ls -A "$TEMP_GOLDEN_DIR")" ]; then
-          echo "Copying golden image binaries from temporary location..."
-          mkdir -p golden/
-          cp "$TEMP_GOLDEN_DIR"/* golden/ || echo "Failed to copy golden images"
+        # Remove .gitattributes to prevent LFS tracking in temporary branch
+        echo "Removing .gitattributes to prevent LFS tracking in temporary branch..."
+        rm -f .gitattributes
+        
+        # Golden images should already be available from the checkout
+        echo "=== Debug: Verifying golden images in temporary branch ==="
+        if [ -d "golden" ]; then
+          echo "Golden images in temporary branch:"
+          ls -la golden/
           
-          echo "Verifying copied golden images are binary data:"
+          # Verify they are still binary data
           for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
             if [ -f "$golden_file" ]; then
               if head -1 "$golden_file" | grep -q "version https://git-lfs.github.com/spec/v1"; then
-                echo "❌ $golden_file is still an LFS pointer after copy"
+                echo "❌ $golden_file became an LFS pointer in temp branch"
               else
-                echo "✅ $golden_file contains actual image data after copy"
-                # Show file size to confirm it's binary data
-                ls -la "$golden_file"
+                echo "✅ $golden_file is binary data in temp branch"
               fi
             fi
           done
         else
-          echo "No golden images found to copy"
+          echo "No golden directory in temporary branch"
         fi
-        
-        # Remove .gitattributes to prevent LFS tracking in temporary branch
-        echo "Removing .gitattributes to prevent LFS tracking in temporary branch..."
-        rm -f .gitattributes
         echo "=============================================="
         
         # Add all generated images and verify what's being added
