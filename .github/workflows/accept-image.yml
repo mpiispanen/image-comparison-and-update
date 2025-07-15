@@ -99,6 +99,12 @@ jobs:
         IMAGE_NAME="${{ steps.parse.outputs.image_name }}"
         COMMENTER="${{ steps.parse.outputs.commenter }}"
         
+        echo "=== Accepting image: $IMAGE_NAME ==="
+        echo "Current branch: $(git branch --show-current)"
+        echo "This will commit to the PR branch: ${{ steps.pr.outputs.head_ref }}"
+        echo "NOT to any temporary display branches"
+        echo "=============================================="
+        
         # Ensure golden directory exists
         mkdir -p golden
         
@@ -128,10 +134,11 @@ jobs:
           Accepted by: $COMMENTER
           Source: PR #${{ github.event.issue.number }}"
           
-          # Push the changes
+          # Push the changes to the PR branch (NOT to temporary display branches)
+          echo "Pushing to PR branch: ${{ steps.pr.outputs.head_ref }}"
           git push origin ${{ steps.pr.outputs.head_ref }}
           
-          echo "Successfully committed and pushed $IMAGE_NAME to golden directory"
+          echo "Successfully committed and pushed $IMAGE_NAME to golden directory on PR branch"
         fi
     
     - name: Comment on success

@@ -512,6 +512,20 @@ jobs:
                 
                 echo "---" >> image_section.md
               done
+              
+              # Add acceptance commands section
+              echo "" >> image_section.md
+              echo "### 🔧 Accept New Images" >> image_section.md
+              echo "" >> image_section.md
+              echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> image_section.md
+              echo "" >> image_section.md
+              echo "\`\`\`" >> image_section.md
+              for filename in $CHANGED_IMAGES; do
+                echo "/accept-image $filename" >> image_section.md
+              done
+              echo "\`\`\`" >> image_section.md
+              echo "" >> image_section.md
+              echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> image_section.md
             else
               echo "No changed images found to display." >> image_section.md
             fi
