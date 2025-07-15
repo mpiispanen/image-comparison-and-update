@@ -251,11 +251,12 @@ jobs:
         git checkout -b "$BRANCH_NAME"
         
         # Add all generated images and verify what's being added
+        # Note: outputs/ and diffs/ are in .gitignore, so we need to force add them
         echo "=== Debug: Adding files ==="
         echo "Adding outputs/:"
-        git add outputs/ && echo "✅ outputs/ added" || echo "❌ Failed to add outputs/"
+        git add --force outputs/ && echo "✅ outputs/ added" || echo "❌ Failed to add outputs/"
         echo "Adding diffs/:"
-        git add diffs/ && echo "✅ diffs/ added" || echo "❌ Failed to add diffs/"
+        git add --force diffs/ && echo "✅ diffs/ added" || echo "❌ Failed to add diffs/"
         echo "Adding golden/:"
         git add golden/ && echo "✅ golden/ added" || echo "❌ Failed to add golden/"
         
