@@ -90,10 +90,12 @@ def main():
     
     # Modify test cases based on scenario
     if test_scenario == 'changed':
-        # Modify some test cases to create detectable differences
+        # Modify all test cases to create detectable differences
         test_cases[0]['text'] = 'Main Screen UI - UPDATED'  # Text change
         test_cases[0]['color_scheme'] = ((255, 255, 255), (0, 0, 0), (150, 100, 200))  # Color change
         test_cases[1]['color_scheme'] = ((220, 220, 220), (50, 50, 50), (200, 150, 100))  # Background change
+        test_cases[2]['text'] = 'Dashboard View - MODIFIED'  # Text change for third image
+        test_cases[2]['color_scheme'] = ((240, 240, 240), (40, 40, 40), (100, 150, 200))  # Color change for third image
         print("Applied changes to create visual differences")
     elif test_scenario == 'mixed':
         # Mix of changed and unchanged - only modify the first image
