@@ -287,9 +287,16 @@ jobs:
         echo "Creating and switching to branch: $BRANCH_NAME"
         git checkout -b "$BRANCH_NAME"
         
-        # Remove .gitattributes to prevent LFS tracking in temporary branch
-        echo "Removing .gitattributes to prevent LFS tracking in temporary branch..."
+        # CRITICAL: Remove .gitattributes FIRST and commit it to prevent LFS tracking
+        echo "=== Debug: Disabling LFS in temporary branch ==="
+        echo "Removing .gitattributes to prevent LFS tracking..."
         rm -f .gitattributes
+        
+        # Commit the .gitattributes removal first to ensure no LFS tracking
+        git add .gitattributes 2>/dev/null || echo ".gitattributes already removed"
+        git commit -m "Remove LFS tracking for image display branch" --allow-empty
+        echo "✅ LFS tracking disabled in temporary branch"
+        echo "================================================"
         
         # Remove the original golden directory completely and recreate with binary files
         echo "=== Debug: Setting up golden images in temporary branch ==="
@@ -316,9 +323,10 @@ jobs:
           done
         fi
         
-        # Force git to treat these as completely new files (not LFS-tracked)
+        # Since LFS is now disabled, these should be added as regular binary files
         echo "=== Debug: Ensuring golden images are treated as regular binary files ==="
-        git rm --cached golden/* 2>/dev/null || echo "No cached golden files to remove"
+        echo "Git LFS status in temporary branch:"
+        git lfs ls-files || echo "No LFS files (this is expected)"
         echo "=============================================="
         
         # Add all generated images and verify what's being added
@@ -366,6 +374,29 @@ jobs:
           if [ "$PUSH_SUCCESS" = "true" ]; then
             echo "images_committed=true" >> $GITHUB_OUTPUT
             echo "✅ Successfully committed images to branch: $BRANCH_NAME"
+            
+            # Debug: Verify images are accessible via HTTP URLs
+            echo "=== Debug: Verifying image accessibility via HTTP URLs ==="
+            REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
+            
+            # Test a few sample images to ensure they're accessible
+            for test_file in golden/*.png outputs/*.png diffs/*.png; do
+              if [ -f "$test_file" ]; then
+                filename=$(basename "$test_file")
+                dir=$(dirname "$test_file")
+                test_url="$REPO_URL/$dir/$filename"
+                echo "🔗 Testing URL: $test_url"
+                
+                # Quick curl test (don't wait too long, just check if URL responds)
+                if curl -s -I "$test_url" --max-time 10 | grep -q "200 OK"; then
+                  echo "✅ URL responds: $test_url"
+                else
+                  echo "❌ URL failed or not ready yet: $test_url"
+                fi
+                break  # Just test one file per directory
+              fi
+            done
+            echo "================================================================"
           else
             echo "images_committed=false" >> $GITHUB_OUTPUT
             echo "❌ Failed to push after 3 attempts"
@@ -427,6 +458,18 @@ jobs:
                 echo "**Golden Master (Expected):**" >> image_section.md
                 echo "![Golden Master]($golden_url)" >> image_section.md
                 echo "📍 **Golden URL:** $golden_url" >> image_section.md
+                
+                # Debug: Test golden image URL and content type
+                echo "🔍 Testing golden image URL: $golden_url"
+                curl_result=$(curl -s -I "$golden_url" --max-time 10 2>&1 || echo "CURL_FAILED")
+                if echo "$curl_result" | grep -q "200 OK"; then
+                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
+                  echo "✅ Golden image accessible - $content_type"
+                  echo "> ✅ **Golden image verified accessible**" >> image_section.md
+                else
+                  echo "❌ Golden image not accessible: $curl_result"
+                  echo "> ❌ **Golden image not accessible** - May still be processing" >> image_section.md
+                fi
                 echo "" >> image_section.md
                 
                 # Add new output
@@ -434,6 +477,18 @@ jobs:
                 echo "**New Output (Actual):**" >> image_section.md
                 echo "![New Output]($output_url)" >> image_section.md
                 echo "📍 **Output URL:** $output_url" >> image_section.md
+                
+                # Debug: Test output image URL
+                echo "🔍 Testing output image URL: $output_url"
+                curl_result=$(curl -s -I "$output_url" --max-time 10 2>&1 || echo "CURL_FAILED")
+                if echo "$curl_result" | grep -q "200 OK"; then
+                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
+                  echo "✅ Output image accessible - $content_type"
+                  echo "> ✅ **Output image verified accessible**" >> image_section.md
+                else
+                  echo "❌ Output image not accessible: $curl_result"
+                  echo "> ❌ **Output image not accessible** - May still be processing" >> image_section.md
+                fi
                 echo "" >> image_section.md
                 
                 # Add diff
@@ -441,6 +496,18 @@ jobs:
                 echo "**Visual Difference (Highlighted Changes):**" >> image_section.md
                 echo "![Difference]($diff_url)" >> image_section.md
                 echo "📍 **Diff URL:** $diff_url" >> image_section.md
+                
+                # Debug: Test diff image URL
+                echo "🔍 Testing diff image URL: $diff_url"
+                curl_result=$(curl -s -I "$diff_url" --max-time 10 2>&1 || echo "CURL_FAILED")
+                if echo "$curl_result" | grep -q "200 OK"; then
+                  content_type=$(echo "$curl_result" | grep -i "content-type:" | head -1)
+                  echo "✅ Diff image accessible - $content_type"
+                  echo "> ✅ **Diff image verified accessible**" >> image_section.md
+                else
+                  echo "❌ Diff image not accessible: $curl_result"
+                  echo "> ❌ **Diff image not accessible** - May still be processing" >> image_section.md
+                fi
                 echo "" >> image_section.md
                 
                 echo "---" >> image_section.md
