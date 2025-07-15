@@ -228,8 +228,8 @@ jobs:
         git status
         echo "=============================================="
         
-        # Create a unique branch name for this PR and run
-        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}"
+        # Create a unique branch name for this PR, run, and scenario
+        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}-${{ matrix.scenario }}"
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
         
         # Store current branch/commit for restoration
@@ -249,6 +249,15 @@ jobs:
         # Create and switch to the temporary branch
         echo "Creating and switching to branch: $BRANCH_NAME"
         git checkout -b "$BRANCH_NAME"
+        
+        # Ensure golden images are available in this branch
+        # First, get the golden images from the original branch
+        echo "=== Debug: Ensuring golden images are available ==="
+        echo "Copying golden images from original branch..."
+        git checkout "$ORIGINAL_BRANCH" -- golden/ || echo "No golden images to copy"
+        echo "Golden images after copy:"
+        ls -la golden/ || echo "golden/ directory not found"
+        echo "=============================================="
         
         # Add all generated images and verify what's being added
         # Note: outputs/ and diffs/ are in .gitignore, so we need to force add them
@@ -272,12 +281,33 @@ jobs:
           
           git commit -m "Temporary visual diff images for PR #${{ github.event.pull_request.number || github.run_number }} - Scenario: ${{ matrix.scenario }}"
           
-          echo "Commit successful, pushing to origin..."
-          # Push the branch
-          git push origin "$BRANCH_NAME"
+          echo "Commit successful, pushing to origin with retry logic..."
+          # Push the branch with retry logic for race conditions
+          PUSH_SUCCESS=false
+          for attempt in 1 2 3; do
+            echo "Push attempt $attempt..."
+            if git push origin "$BRANCH_NAME"; then
+              PUSH_SUCCESS=true
+              echo "✅ Push successful on attempt $attempt"
+              break
+            else
+              echo "❌ Push failed on attempt $attempt"
+              if [ $attempt -lt 3 ]; then
+                echo "Waiting before retry..."
+                sleep $((attempt * 2))
+                # Try to pull any conflicting changes and retry
+                git pull origin "$BRANCH_NAME" --allow-unrelated-histories || echo "No remote branch to pull"
+              fi
+            fi
+          done
           
-          echo "images_committed=true" >> $GITHUB_OUTPUT
-          echo "✅ Successfully committed images to branch: $BRANCH_NAME"
+          if [ "$PUSH_SUCCESS" = "true" ]; then
+            echo "images_committed=true" >> $GITHUB_OUTPUT
+            echo "✅ Successfully committed images to branch: $BRANCH_NAME"
+          else
+            echo "images_committed=false" >> $GITHUB_OUTPUT
+            echo "❌ Failed to push after 3 attempts"
+          fi
         else
           echo "images_committed=false" >> $GITHUB_OUTPUT
           echo "❌ No changes to commit - this indicates the images were not generated or available"
