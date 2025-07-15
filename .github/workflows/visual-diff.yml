@@ -263,14 +263,17 @@ jobs:
         
         # Verify golden images are actual image data, not LFS pointers
         echo "Verifying golden image content..."
-        for golden_file in golden/*.png golden/*.jpg golden/*.jpeg 2>/dev/null; do
-          if [ -f "$golden_file" ]; then
-            if head -1 "$golden_file" | grep -q "version https://git-lfs.github.com/spec/v1"; then
-              echo "❌ $golden_file is still an LFS pointer - attempting specific pull..."
-              git lfs pull --include="$golden_file" || echo "Failed to pull $golden_file"
-            else
-              echo "✅ $golden_file contains actual image data"
-            fi
+        for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
+          # Skip if no files match the pattern (shell glob returns the literal pattern)
+          if [ ! -f "$golden_file" ]; then
+            continue
+          fi
+          
+          if head -1 "$golden_file" | grep -q "version https://git-lfs.github.com/spec/v1"; then
+            echo "❌ $golden_file is still an LFS pointer - attempting specific pull..."
+            git lfs pull --include="$golden_file" || echo "Failed to pull $golden_file"
+          else
+            echo "✅ $golden_file contains actual image data"
           fi
         done
         
