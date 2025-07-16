@@ -57,8 +57,17 @@ def main():
     # Ensure outputs directory exists
     os.makedirs('outputs', exist_ok=True)
     
-    # Set seed for reproducible random elements
-    random.seed(42)
+    # Check if we should generate test scenario with changes
+    test_scenario = os.environ.get('TEST_SCENARIO', 'baseline')
+    print(f"Generating images for scenario: {test_scenario}")
+    
+    # Set seed for reproducible random elements - different seeds for different scenarios
+    if test_scenario == 'changed':
+        random.seed(123)  # Different seed to create changes
+        print("Using changed seed to create visual differences")
+    else:
+        random.seed(42)   # Original baseline seed
+        print("Using baseline seed for consistent images")
     
     # Generate test images
     test_cases = [
@@ -79,6 +88,21 @@ def main():
         }
     ]
     
+    # Modify test cases based on scenario
+    if test_scenario == 'changed':
+        # Modify all test cases to create detectable differences
+        test_cases[0]['text'] = 'Main Screen UI - UPDATED'  # Text change
+        test_cases[0]['color_scheme'] = ((255, 255, 255), (0, 0, 0), (150, 100, 200))  # Color change
+        test_cases[1]['color_scheme'] = ((220, 220, 220), (50, 50, 50), (200, 150, 100))  # Background change
+        test_cases[2]['text'] = 'Dashboard View - MODIFIED'  # Text change for third image
+        test_cases[2]['color_scheme'] = ((240, 240, 240), (40, 40, 40), (100, 150, 200))  # Color change for third image
+        print("Applied changes to create visual differences")
+    elif test_scenario == 'mixed':
+        # Mix of changed and unchanged - only modify the first image
+        test_cases[0]['text'] = 'Main Screen UI - CHANGED'
+        test_cases[0]['color_scheme'] = ((255, 255, 255), (0, 0, 0), (200, 100, 150))
+        print("Applied mixed changes - some images will pass, some will fail")
+    
     for test_case in test_cases:
         print(f"Generating {test_case['filename']}...")
         image = create_test_image(
@@ -91,7 +115,7 @@ def main():
         image.save(output_path)
         print(f"Saved {output_path}")
     
-    print("Test image generation completed!")
+    print(f"Test image generation completed for scenario: {test_scenario}!")
 
 if __name__ == "__main__":
     main()
