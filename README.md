@@ -28,53 +28,50 @@ git lfs track "golden/**/*.jpeg"
 
 ## Workflow Overview
 
-### 1. Visual Diff and PR Report
+### 1. Visual Diff and PR Report (Production Use)
 
-**Trigger**: On every pull request
+**Trigger**: Via `workflow_call` from external repositories
 
 **Process**:
-1. Runs your test suite to generate output images in `outputs/` directory
+1. Checks for existing test images in configurable directory (default: `outputs/`)  
 2. Compares each output against its golden master using NVIDIA flip
 3. Generates visual diff images in `diffs/` directory  
 4. Commits images temporarily to a unique branch for direct display
 5. Posts comprehensive comparison report as PR comment with embedded images
 6. Uploads complete artifact package as backup
 
-**Image Display**:
-Images are now directly embedded in PR comments using temporary GitHub branches:
+**Important**: This workflow is designed for production use by external CI systems. It expects test images to already exist and only performs visual comparison. It does not generate test images.
 
-```markdown
-## 🖼️ Visual Comparison Results
-
-### Changed Images
-
-#### ui-main-screen.png
-
-**Golden Master (Expected):**
-![Golden Master](https://raw.githubusercontent.com/owner/repo/visual-diff-pr-123-run-456/golden/ui-main-screen.png)
-
-**New Output (Actual):**
-![New Output](https://raw.githubusercontent.com/owner/repo/visual-diff-pr-123-run-456/outputs/ui-main-screen.png)
-
-**Visual Difference (Highlighted Changes):**
-![Difference](https://raw.githubusercontent.com/owner/repo/visual-diff-pr-123-run-456/diffs/diff_ui-main-screen.png)
-
-### 📦 Backup Download
-If images don't load above, download the complete results: [Visual Test Results](https://github.com/owner/repo/actions/runs/456)
-
-> 🧹 The temporary branch `visual-diff-pr-123-run-456` will be automatically cleaned up after 7 days.
+**Usage in external repositories**:
+```yaml
+jobs:
+  your-app-build:
+    runs-on: ubuntu-latest
+    steps:
+      # Your application CI steps
+      - name: Generate screenshots
+        run: your-app screenshot --output outputs/
+      
+  visual-diff:
+    needs: your-app-build
+    uses: mpiispanen/image-comparison-and-update/.github/workflows/visual-diff.yml@main
+    with:
+      outputs_directory: outputs  # Optional: defaults to 'outputs'
 ```
 
-**Temporary Branch Cleanup**:
-- Creates unique branches like `visual-diff-pr-{number}-run-{id}` for each test run
-- Branches are automatically cleaned up after 7 days
-- Images are immediately accessible via GitHub raw URLs
-- No API rate limits or authentication issues
+### 2. Test Visual Diff System (Automated Testing)
 
-**Fallback to Artifacts**:
-If branch creation fails, the workflow falls back to the previous artifact-based approach.
+**Trigger**: Automatically on pull requests and pushes to main, also manual workflow dispatch
 
-### 2. Accept New Golden Image
+**Process**:
+1. Generates test images using different scenarios (baseline, changed, mixed)
+2. Tests the visual diff system itself with these known test cases
+3. Validates that the visual diff system correctly detects differences and matches
+4. Provides automated validation that the visual diff system is working correctly
+
+**Purpose**: This workflow tests the visual diff system itself to ensure it's working correctly. It runs automatically to catch any regressions in the visual diff functionality.
+
+### 3. Accept New Golden Image
 
 **Trigger**: Comment `/accept-image <filename>` on PR
 
@@ -89,17 +86,17 @@ If branch creation fails, the workflow falls back to the previous artifact-based
 
 ### Test Scenarios
 
-The workflow supports different test scenarios to help verify both passing and failing cases:
+The test-visual-diff workflow supports different test scenarios to help verify both passing and failing cases:
 
-**Available scenarios:**
+**Available scenarios** (for testing the visual diff system):
 - `baseline`: Generates consistent images that match golden masters (all tests pass)
 - `changed`: Generates modified images that differ from golden masters (all tests fail)  
 - `mixed`: Generates a mix where some images pass and some fail
 
-**Running scenarios:**
+**Running scenarios for testing**:
 
-1. **Via GitHub Actions UI** (recommended):
-   - Go to Actions → Visual Diff and PR Report → Run workflow
+1. **Via GitHub Actions UI** (manual testing):
+   - Go to Actions → Test Visual Diff System → Run workflow
    - Select the desired test scenario from the dropdown
    - Click "Run workflow"
 
@@ -121,13 +118,68 @@ The workflow supports different test scenarios to help verify both passing and f
 
 ### Running Tests
 
-The workflow automatically runs `generate_test_images.py` to create test outputs. Customize this script for your application:
+**Production Integration**: The visual diff workflow expects your application's CI pipeline to generate test images in the `outputs/` directory. The workflow only performs visual comparison and does not generate test images.
+
+**Automated Testing**: The visual diff system itself is automatically tested on every pull request and push to main using the `test-visual-diff` workflow. This ensures the visual diff functionality is working correctly.
+
+**Manual Testing**: You can also manually test the visual diff system using workflow dispatch:
+
+1. **Via GitHub Actions UI**:
+   - Go to Actions → Test Visual Diff System → Run workflow
+   - Select the desired test scenario from the dropdown (baseline, changed, mixed, or all)
+   - Click "Run workflow"
+
+2. **Via local testing**:
+   ```bash
+   # Run specific scenario
+   python test_scenarios.py baseline
+   python test_scenarios.py changed  
+   python test_scenarios.py mixed
+   
+   # Run all scenarios
+   python test_scenarios.py
+   ```
+
+**Integration with Your Application**:
+Your application's CI should populate the outputs directory with screenshots, renders, or other visual outputs that need to be tested. The directory is configurable (defaults to `outputs/`). For example:
 
 ```python
-# Your test suite should populate outputs/ directory
+# Your application's CI script
 def run_your_tests():
     # Generate screenshots, renders, etc.
     save_image("outputs/ui-component.png", your_image_data)
+    save_image("outputs/dashboard-view.png", dashboard_screenshot)
+```
+
+**External Repository Integration**:
+```yaml
+# In your external repository's .github/workflows/ci.yml
+name: CI with Visual Testing
+
+on: [pull_request]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Your build steps...
+      
+      - name: Generate test images
+        run: |
+          mkdir -p outputs
+          your-app screenshot --output outputs/
+          
+  visual-regression:
+    needs: build-and-test
+    uses: mpiispanen/image-comparison-and-update/.github/workflows/visual-diff.yml@main
+    with:
+      outputs_directory: outputs
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
 ```
 
 ### Comment Behavior
@@ -156,9 +208,11 @@ This will:
 ```
 ├── .gitattributes          # Git LFS configuration
 ├── .github/workflows/
-│   ├── visual-diff.yml     # Main comparison workflow
+│   ├── visual-diff.yml     # Production visual comparison workflow
+│   ├── test-visual-diff.yml # Automated testing of visual diff system
 │   └── accept-image.yml    # Image acceptance workflow
-├── generate_test_images.py # Sample test script
+├── generate_test_images.py # Test image generation script
+├── test_scenarios.py       # Test scenario runner
 ├── outputs/                # Generated test images (temporary)
 ├── diffs/                  # Visual diff images (temporary)
 └── golden/                 # Reference images (LFS tracked)
@@ -226,12 +280,23 @@ Ensure the user commenting has write access to the repository.
 - Only repository collaborators with write or admin access can accept images
 - Check repository settings → Manage access
 
+### No Test Images Found
+
+**Error message:** "No test images found in outputs/ directory"
+
+**Cause**: The visual diff workflow expects test images to already exist in the `outputs/` directory, generated by your application's CI pipeline.
+
+**Solutions**:
+1. **For production use**: Ensure your application's CI pipeline generates images in the `outputs/` directory before the visual diff workflow runs
+2. **For testing**: Use the manual workflow dispatch "Generate Test Images" option to create test images
+3. **Local testing**: Run `python generate_test_images.py` to create sample images locally
+
 ### Workflow Not Triggering
 
 Check that:
-- The PR has changes that would generate new output images
-- The `generate_test_images.py` script runs successfully
-- Artifacts are being uploaded correctly
+- Your application's CI pipeline has generated test images in the `outputs/` directory
+- The test images are accessible when the visual diff workflow runs
+- The images are in PNG format and properly named
 
 ### Git LFS Issues
 
