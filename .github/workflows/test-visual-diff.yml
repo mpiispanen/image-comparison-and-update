@@ -280,3 +280,57 @@ jobs:
         name: visual-diff-test-summary
         path: test_summary.md
         retention-days: 30
+    
+    - name: Comment PR with test results
+      if: always() && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Read the test summary
+          let report;
+          try {
+            report = fs.readFileSync('test_summary.md', 'utf8');
+          } catch (error) {
+            report = "## ❌ Visual Diff System Test Summary\n\nTest summary could not be generated due to an error.\n\n**Error:** " + error.message;
+          }
+          
+          // Add header to distinguish from production visual diff results
+          const testReport = "## 🧪 Visual Diff System Test Results\n\n" + 
+            "> This is automated testing of the visual diff system itself, not production visual regression testing.\n\n" + 
+            report;
+          
+          // Clean up old test result comments first
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+          
+          const botTestComments = comments.data.filter(comment => 
+            comment.user.type === 'Bot' && 
+            comment.body.includes('Visual Diff System Test Results')
+          );
+          
+          // Delete old test comments to avoid confusion
+          for (const comment of botTestComments) {
+            try {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id
+              });
+              console.log(`Deleted old test comment: ${comment.id}`);
+            } catch (error) {
+              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
+            }
+          }
+          
+          // Always create a new comment with test results
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: testReport
+          });
