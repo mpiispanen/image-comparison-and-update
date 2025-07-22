@@ -204,6 +204,8 @@ jobs:
         
         echo "# Visual Regression Test Results" > "$PRODUCTION_REPORT"
         echo "" >> "$PRODUCTION_REPORT"
+        echo "> **Note:** This is a simulation of production workflow output. In actual usage, images would be embedded as clickable thumbnails." >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
         echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> "$PRODUCTION_REPORT"
         echo "" >> "$PRODUCTION_REPORT"
         echo "## Summary" >> "$PRODUCTION_REPORT"
@@ -246,7 +248,7 @@ jobs:
             
             # Add image placeholders (as the production workflow would)
             echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
-            echo "![New Output](https://raw.githubusercontent.com/repo/branch/outputs/$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "_Image would be displayed here in production: \`$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
             echo "" >> "detailed_results_${{ matrix.scenario }}.md"
             
             echo "To accept this new image: \`/accept-image $filename\`" >> "detailed_results_${{ matrix.scenario }}.md"
@@ -310,13 +312,13 @@ jobs:
               
               # Add image placeholders (as production workflow would)
               echo "**Golden Master (Expected):**" >> "detailed_results_${{ matrix.scenario }}.md"
-              echo "![Golden Master](https://raw.githubusercontent.com/repo/branch/golden/$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "_Image would be displayed here in production: \`golden/$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
-              echo "![New Output](https://raw.githubusercontent.com/repo/branch/outputs/$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "_Image would be displayed here in production: \`outputs/$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "**Visual Difference (Highlighted Changes):**" >> "detailed_results_${{ matrix.scenario }}.md"
-              echo "![Visual Difference](https://raw.githubusercontent.com/repo/branch/diffs/diff_$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "_Image would be displayed here in production: \`diffs/diff_$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "" >> "detailed_results_${{ matrix.scenario }}.md"
               
               echo "**Action Required:** Review the visual differences and accept if intentional" >> "detailed_results_${{ matrix.scenario }}.md"
@@ -345,10 +347,10 @@ jobs:
               
               # Add image placeholders (as production workflow would)
               echo "**Golden Master (Expected):**" >> "detailed_results_${{ matrix.scenario }}.md"
-              echo "![Golden Master](https://raw.githubusercontent.com/repo/branch/golden/$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "_Image would be displayed here in production: \`golden/$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
-              echo "![New Output](https://raw.githubusercontent.com/repo/branch/outputs/$filename)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "_Image would be displayed here in production: \`outputs/$filename\`_" >> "detailed_results_${{ matrix.scenario }}.md"
               echo "" >> "detailed_results_${{ matrix.scenario }}.md"
               
               echo "---" >> "detailed_results_${{ matrix.scenario }}.md"
