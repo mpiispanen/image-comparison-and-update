@@ -8,6 +8,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  actions: read  # Needed for artifact access
 
 jobs:
   accept-image:
@@ -17,10 +18,10 @@ jobs:
     steps:
     - name: Parse command and check permissions
       id: parse
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
       with:
         script: |
-          // Extract image name from comment
+          // Extract image name from comment with input validation
           const comment = context.payload.comment.body;
           const match = comment.match(/^\/accept-image\s+(.+)$/);
           
@@ -30,6 +31,13 @@ jobs:
           }
           
           const imageName = match[1].trim();
+          
+          // Validate image name to prevent injection attacks
+          if (!/^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/i.test(imageName)) {
+            core.setFailed('Invalid image name. Must be alphanumeric with valid image extension (.png, .jpg, .jpeg)');
+            return;
+          }
+          
           console.log(`Image to accept: ${imageName}`);
           
           // Check if commenter has write permissions
@@ -57,7 +65,7 @@ jobs:
     
     - name: Get PR details
       id: pr
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
       with:
         script: |
           const { data: pr } = await github.rest.pulls.get({
@@ -76,7 +84,7 @@ jobs:
         git lfs install
     
     - name: Checkout PR branch
-      uses: actions/checkout@v4
+      uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
       with:
         ref: ${{ steps.pr.outputs.head_ref }}
         token: ${{ secrets.GITHUB_TOKEN }}
@@ -89,13 +97,15 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
     
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
       with:
         name: visual-test-results-${{ github.event.issue.number }}
         path: ./artifacts/
     
     - name: Accept and commit image
       run: |
+        set -euo pipefail  # Enable strict error handling
+        
         IMAGE_NAME="${{ steps.parse.outputs.image_name }}"
         COMMENTER="${{ steps.parse.outputs.commenter }}"
         
@@ -108,9 +118,17 @@ jobs:
         # Ensure golden directory exists
         mkdir -p golden
         
-        # Check if the image exists in artifacts
+        # Check if the image exists in artifacts with secure path handling
         if [ ! -f "artifacts/outputs/$IMAGE_NAME" ]; then
           echo "Error: Image $IMAGE_NAME not found in artifacts"
+          echo "Available files in artifacts/outputs/:"
+          ls -la artifacts/outputs/ || echo "No outputs directory found"
+          exit 1
+        fi
+        
+        # Verify the source file is actually an image
+        if ! file "artifacts/outputs/$IMAGE_NAME" | grep -q "image data"; then
+          echo "Error: $IMAGE_NAME is not a valid image file"
           exit 1
         fi
         
@@ -136,13 +154,16 @@ jobs:
           
           # Push the changes to the PR branch (NOT to temporary display branches)
           echo "Pushing to PR branch: ${{ steps.pr.outputs.head_ref }}"
-          git push origin ${{ steps.pr.outputs.head_ref }}
-          
-          echo "Successfully committed and pushed $IMAGE_NAME to golden directory on PR branch"
+          if timeout 60 git push origin "${{ steps.pr.outputs.head_ref }}"; then
+            echo "Successfully committed and pushed $IMAGE_NAME to golden directory on PR branch"
+          else
+            echo "Failed to push changes within timeout"
+            exit 1
+          fi
         fi
     
     - name: Comment on success
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
       with:
         script: |
           const imageName = '${{ steps.parse.outputs.image_name }}';
@@ -157,7 +178,7 @@ jobs:
     
     - name: Comment on failure
       if: failure()
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
       with:
         script: |
           const imageName = '${{ steps.parse.outputs.image_name }}';
