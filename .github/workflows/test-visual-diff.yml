@@ -29,7 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        scenario: ${{ github.event.inputs.test_scenario == 'all' && fromJson('["baseline", "changed", "mixed"]') || (github.event.inputs.test_scenario && fromJson(format('["{0}"]', github.event.inputs.test_scenario))) || fromJson('["baseline", "changed", "mixed"]') }}
+        scenario: [baseline, changed, mixed]
+    
+    # Skip scenarios that don't match the input
+    if: ${{ !github.event.inputs.test_scenario || github.event.inputs.test_scenario == 'all' || github.event.inputs.test_scenario == matrix.scenario }}
     
     steps:
     - name: Checkout code
