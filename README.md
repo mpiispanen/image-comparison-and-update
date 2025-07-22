@@ -26,6 +26,25 @@ git lfs track "golden/**/*.jpg"
 git lfs track "golden/**/*.jpeg"
 ```
 
+### Local Development Setup
+
+For contributors working on this repository, tests should be run before committing changes:
+
+```bash
+# 1. Set up test environment (one-time setup)
+./run_tests.sh --setup
+
+# 2. Run tests before committing
+./run_tests.sh
+
+# 3. Alternatively, run specific test scenarios
+./run_tests.sh baseline
+./run_tests.sh changed
+./run_tests.sh mixed
+```
+
+**Automatic Pre-commit Testing**: A pre-commit hook is installed that automatically runs tests before each commit. This ensures code quality and prevents broken changes from being committed.
+
 ## Workflow Overview
 
 ### 1. Visual Diff and PR Report (Production Use)
