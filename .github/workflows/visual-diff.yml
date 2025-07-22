@@ -115,16 +115,15 @@ jobs:
             echo "**File Size:** $(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown') bytes" >> detailed_results.md
             
             # Get image dimensions using Python (more reliable than identify)
-            dimensions=$(python3 -c "
-try:
-    from PIL import Image
-    img = Image.open('$output_file')
-    print(f'{img.width}x{img.height}')
-except Exception as e:
-    print('Unknown')
-" 2>/dev/null || echo 'Unknown')
+            dimensions=$(python3 -c "from PIL import Image; img = Image.open('$output_file'); print(f'{img.width}x{img.height}')" 2>/dev/null || echo 'Unknown')
             echo "**Dimensions:** $dimensions" >> detailed_results.md
             echo "" >> detailed_results.md
+            
+            # Add image placeholder for new images
+            echo "**New Output (Actual):**" >> detailed_results.md
+            echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+            echo "" >> detailed_results.md
+            
             echo "To accept this new image: \`/accept-image $filename\`" >> detailed_results.md
             echo "" >> detailed_results.md
             echo "---" >> detailed_results.md
@@ -238,6 +237,18 @@ except Exception as e:
                 echo "- Mean error level: $mean_threshold" >> detailed_results.md
               fi
               echo "" >> detailed_results.md
+              
+              # Add image placeholders for changed images
+              echo "**Golden Master (Expected):**" >> detailed_results.md
+              echo "GOLDEN_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**New Output (Actual):**" >> detailed_results.md
+              echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Visual Difference (Highlighted Changes):**" >> detailed_results.md
+              echo "DIFF_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              
               echo "**Action Required:** Review the visual differences and accept if intentional" >> detailed_results.md
               echo "To accept this change: \`/accept-image $filename\`" >> detailed_results.md
               echo "" >> detailed_results.md
@@ -261,6 +272,15 @@ except Exception as e:
               echo "" >> detailed_results.md
               echo "**Result:** Image matches golden master within acceptable tolerance" >> detailed_results.md
               echo "" >> detailed_results.md
+              
+              # Add image placeholders for passed images (still useful to show what matched)
+              echo "**Golden Master (Expected):**" >> detailed_results.md
+              echo "GOLDEN_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**New Output (Actual):**" >> detailed_results.md
+              echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              
               echo "---" >> detailed_results.md
               echo "" >> detailed_results.md
             fi
@@ -510,80 +530,77 @@ except Exception as e:
             REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
             echo "=== Using repository URL: $REPO_URL ==="
             
-            # Create image section
-            echo "" > image_section.md
-            echo "## 🖼️ Visual Comparison Images" >> image_section.md
-            echo "" >> image_section.md
-            echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> image_section.md
-            echo "" >> image_section.md
+            # Process each output image to replace placeholders with actual image URLs
+            for output_file in $OUTPUTS_DIR/*.png; do
+              if [ ! -f "$output_file" ]; then
+                continue
+              fi
+              
+              filename=$(basename "$output_file")
+              golden_file="golden/$filename"
+              
+              echo "=== Embedding images for: $filename ==="
+              
+              # Define image URLs
+              golden_url="$REPO_URL/golden/$filename"
+              output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
+              diff_url="$REPO_URL/diffs/diff_$filename"
+              
+              # Replace placeholders with actual image markdown
+              # For golden images (if they exist)
+              if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|![Golden Master]($golden_url)|g" comparison_report.md
+              fi
+              
+              # For new/output images (always exists)
+              sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|![New Output]($output_url)|g" comparison_report.md
+              
+              # For diff images (only if it was generated)
+              if [ -f "diffs/diff_$filename" ]; then
+                sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|![Visual Difference]($diff_url)|g" comparison_report.md
+              else
+                # Remove diff placeholder if no diff was generated
+                sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
+              fi
+            done
             
-            # Get list of image files from the changed_images output instead of filesystem
+            # Add acceptance commands section and download backup as footnote
+            echo "" >> comparison_report.md
+            echo "## 🔧 Accept New Images" >> comparison_report.md
+            echo "" >> comparison_report.md
+            
             CHANGED_IMAGES="${{ steps.compare.outputs.changed_images }}"
-            echo "=== Changed images: '$CHANGED_IMAGES' ==="
-            
             if [ -n "$CHANGED_IMAGES" ] && [ "$CHANGED_IMAGES" != " " ]; then
-              echo "### Changed Images" >> image_section.md
-              
-              # Process each changed image
+              echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> comparison_report.md
+              echo "" >> comparison_report.md
+              echo "\`\`\`" >> comparison_report.md
               for filename in $CHANGED_IMAGES; do
-                echo "=== Processing image: $filename ==="
-                
-                echo "" >> image_section.md
-                echo "#### $filename" >> image_section.md
-                echo "" >> image_section.md
-                
-                # Add golden master if it would exist
-                golden_url="$REPO_URL/golden/$filename"
-                echo "**Golden Master (Expected):**" >> image_section.md
-                echo "![Golden Master]($golden_url)" >> image_section.md
-                echo "" >> image_section.md
-                
-                # Add new output
-                output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
-                echo "**New Output (Actual):**" >> image_section.md
-                echo "![New Output]($output_url)" >> image_section.md
-                echo "" >> image_section.md
-                
-                # Add diff
-                diff_url="$REPO_URL/diffs/diff_$filename"
-                echo "**Visual Difference (Highlighted Changes):**" >> image_section.md
-                echo "![Difference]($diff_url)" >> image_section.md
-                echo "" >> image_section.md
-                
-                echo "---" >> image_section.md
+                echo "/accept-image $filename" >> comparison_report.md
               done
-              
-              # Add acceptance commands section
-              echo "" >> image_section.md
-              echo "### 🔧 Accept New Images" >> image_section.md
-              echo "" >> image_section.md
-              echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> image_section.md
-              echo "" >> image_section.md
-              echo "\`\`\`" >> image_section.md
-              for filename in $CHANGED_IMAGES; do
-                echo "/accept-image $filename" >> image_section.md
-              done
-              echo "\`\`\`" >> image_section.md
-              echo "" >> image_section.md
-              echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> image_section.md
+              echo "\`\`\`" >> comparison_report.md
+              echo "" >> comparison_report.md
+              echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> comparison_report.md
             else
-              echo "No changed images to display." >> image_section.md
+              echo "No changed images require acceptance." >> comparison_report.md
             fi
             
-            echo "" >> image_section.md
-            echo "### 📦 Backup Download" >> image_section.md
-            echo "If images don't load above, download the complete results: **[Visual Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> image_section.md
-            echo "" >> image_section.md
-            echo "> 🧹 The temporary branch \`$BRANCH_NAME\` will be automatically cleaned up after 7 days." >> image_section.md
+            echo "" >> comparison_report.md
+            echo "## 📦 Backup Download" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "If images don't load above, download the complete results: **[Visual Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "> 🧹 The temporary branch \`$BRANCH_NAME\` will be automatically cleaned up after 7 days." >> comparison_report.md
             
-            # Replace the placeholder in the main report
-            sed -i '/IMAGE_EMBEDDING_PLACEHOLDER/r image_section.md' comparison_report.md
+            # Remove the placeholder since we've embedded images directly
             sed -i '/IMAGE_EMBEDDING_PLACEHOLDER/d' comparison_report.md
             
-            echo "✅ Enhanced comparison report generated with embedded images"
+            echo "✅ Enhanced comparison report generated with embedded images in detailed results"
           else
             echo "❌ Images were not committed, using fallback"
-            # Fallback to artifact download if commit failed
+            # Fallback: Remove image placeholders and add download section
+            sed -i '/.*_IMAGE_PLACEHOLDER_.*/d' comparison_report.md
             sed -i 's|IMAGE_EMBEDDING_PLACEHOLDER|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`'$OUTPUTS_DIR'/`** - New test images\n- **`diffs/`** - Visual differences\n- **`golden/`** - Golden master images\n- **`comparison_report.md`** - This report|' comparison_report.md
           fi
         else
