@@ -46,3 +46,8 @@ Thumbs.db
 *.tmp
 *.temp
 comparison_report.md
+detailed_results.md
+
+# Test artifacts
+test*.md
+original_report.md
