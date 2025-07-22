@@ -81,8 +81,13 @@ jobs:
         echo "| File | Status | FLIP Mean Error | Result |" >> comparison_report.md
         echo "|------|--------|-----------------|--------|" >> comparison_report.md
         
-        # Initialize summary data
+        # Initialize summary data and detailed results
         summary_data=""
+        
+        # Initialize detailed results section
+        echo "" > detailed_results.md
+        echo "## Detailed Results" >> detailed_results.md
+        echo "" >> detailed_results.md
         
         # Process each output image
         for output_file in $OUTPUTS_DIR/*.png; do
@@ -101,6 +106,29 @@ jobs:
           if [ ! -f "$golden_file" ]; then
             # New image - no golden master exists
             summary_data="$summary_data| \`$filename\` | 🆕 New | N/A | Needs acceptance |\n"
+            
+            # Add detailed analysis for new image
+            echo "### 🆕 $filename (New Image)" >> detailed_results.md
+            echo "" >> detailed_results.md
+            echo "**Status:** New image detected - no golden master exists" >> detailed_results.md
+            echo "**Action Required:** This image needs to be accepted as a new golden master" >> detailed_results.md
+            echo "**File Size:** $(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown') bytes" >> detailed_results.md
+            
+            # Get image dimensions using Python (more reliable than identify)
+            dimensions=$(python3 -c "
+try:
+    from PIL import Image
+    img = Image.open('$output_file')
+    print(f'{img.width}x{img.height}')
+except Exception as e:
+    print('Unknown')
+" 2>/dev/null || echo 'Unknown')
+            echo "**Dimensions:** $dimensions" >> detailed_results.md
+            echo "" >> detailed_results.md
+            echo "To accept this new image: \`/accept-image $filename\`" >> detailed_results.md
+            echo "" >> detailed_results.md
+            echo "---" >> detailed_results.md
+            echo "" >> detailed_results.md
             
             CHANGED_IMAGES="$CHANGED_IMAGES $filename"
             CHANGES_DETECTED=true
@@ -149,6 +177,19 @@ jobs:
               echo "Error: FLIP command failed with exit code $flip_exit_code"
               echo "Error output: $flip_output"
               summary_data="$summary_data| \`$filename\` | ❌ Error | N/A | FLIP failed |\n"
+              
+              # Add detailed error information
+              echo "### ❌ $filename (Comparison Error)" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Status:** FLIP comparison failed" >> detailed_results.md
+              echo "**Error Code:** $flip_exit_code" >> detailed_results.md
+              echo "**Error Output:**" >> detailed_results.md
+              echo "\`\`\`" >> detailed_results.md
+              echo "$flip_output" >> detailed_results.md
+              echo "\`\`\`" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "---" >> detailed_results.md
+              echo "" >> detailed_results.md
               continue
             fi
             
@@ -166,12 +207,62 @@ jobs:
             # Using awk for floating point comparison
             is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
             
+            # Add detailed analysis section for this image
             if [ "$is_different" = "yes" ]; then
               summary_data="$summary_data| \`$filename\` | 🔄 Changed | $mean_error | Needs review |\n"
               CHANGED_IMAGES="$CHANGED_IMAGES $filename"
               CHANGES_DETECTED=true
+              
+              # Add comprehensive detailed analysis for changed image
+              echo "### 🔄 $filename (Changed)" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Status:** Visual differences detected" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**FLIP Analysis Results:**" >> detailed_results.md
+              echo "- **Mean Error:** ${mean_error:-'N/A'}" >> detailed_results.md
+              echo "- **Median Error:** ${median_error:-'N/A'}" >> detailed_results.md
+              echo "- **1st Quartile:** ${q1_error:-'N/A'}" >> detailed_results.md
+              echo "- **3rd Quartile:** ${q3_error:-'N/A'}" >> detailed_results.md
+              echo "- **Min Error:** ${min_error:-'N/A'}" >> detailed_results.md
+              echo "- **Max Error:** ${max_error:-'N/A'}" >> detailed_results.md
+              echo "- **Pixels per Degree:** ${ppd:-'N/A'}" >> detailed_results.md
+              echo "- **Evaluation Time:** ${eval_time:-'N/A'}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Interpretation:**" >> detailed_results.md
+              if [ -n "$mean_error" ]; then
+                mean_threshold=$(echo "$mean_error" | awk '{
+                  if ($1 > 0.1) print "High - significant visual differences"
+                  else if ($1 > 0.01) print "Medium - noticeable differences"
+                  else print "Low - subtle differences"
+                }')
+                echo "- Mean error level: $mean_threshold" >> detailed_results.md
+              fi
+              echo "" >> detailed_results.md
+              echo "**Action Required:** Review the visual differences and accept if intentional" >> detailed_results.md
+              echo "To accept this change: \`/accept-image $filename\`" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "---" >> detailed_results.md
+              echo "" >> detailed_results.md
             else
               summary_data="$summary_data| \`$filename\` | ✅ Passed | $mean_error | No changes |\n"
+              
+              # Add detailed analysis for passed image
+              echo "### ✅ $filename (Passed)" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Status:** No significant visual differences detected" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**FLIP Analysis Results:**" >> detailed_results.md
+              echo "- **Mean Error:** ${mean_error:-'N/A'} (below significance threshold)" >> detailed_results.md
+              echo "- **Median Error:** ${median_error:-'N/A'}" >> detailed_results.md
+              echo "- **Min Error:** ${min_error:-'N/A'}" >> detailed_results.md
+              echo "- **Max Error:** ${max_error:-'N/A'}" >> detailed_results.md
+              echo "- **Pixels per Degree:** ${ppd:-'N/A'}" >> detailed_results.md
+              echo "- **Evaluation Time:** ${eval_time:-'N/A'}" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "**Result:** Image matches golden master within acceptable tolerance" >> detailed_results.md
+              echo "" >> detailed_results.md
+              echo "---" >> detailed_results.md
+              echo "" >> detailed_results.md
             fi
           fi
         done
@@ -180,12 +271,11 @@ jobs:
         echo -e "$summary_data" >> comparison_report.md
         echo "" >> comparison_report.md
         
-        # Add detailed results for changed/new images
-        echo "## Detailed Results" >> comparison_report.md
-        echo "" >> comparison_report.md
+        # Append detailed results to the main report
+        cat detailed_results.md >> comparison_report.md
         
-        # Note: Images will be available in workflow artifacts for download
-        echo "ARTIFACT_DOWNLOAD_INFO" >> comparison_report.md
+        # Add image embedding placeholder for later replacement
+        echo "IMAGE_EMBEDDING_PLACEHOLDER" >> comparison_report.md
         
         # Set outputs for next steps
         echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
@@ -408,6 +498,9 @@ jobs:
     - name: Generate comprehensive comparison report with embedded images
       id: generate_report
       run: |
+        # Use configurable outputs directory
+        OUTPUTS_DIR="${{ steps.check_images.outputs.outputs_dir }}"
+        
         # Read the current comparison report
         if [ -f comparison_report.md ]; then
           BRANCH_NAME="${{ steps.commit_images.outputs.branch_name }}"
@@ -418,17 +511,19 @@ jobs:
             echo "=== Using repository URL: $REPO_URL ==="
             
             # Create image section
-            echo "## 🖼️ Visual Comparison Results" > image_section.md
+            echo "" > image_section.md
+            echo "## 🖼️ Visual Comparison Images" >> image_section.md
             echo "" >> image_section.md
             echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> image_section.md
             echo "" >> image_section.md
-            echo "### Changed Images" >> image_section.md
             
             # Get list of image files from the changed_images output instead of filesystem
             CHANGED_IMAGES="${{ steps.compare.outputs.changed_images }}"
             echo "=== Changed images: '$CHANGED_IMAGES' ==="
             
             if [ -n "$CHANGED_IMAGES" ] && [ "$CHANGED_IMAGES" != " " ]; then
+              echo "### Changed Images" >> image_section.md
+              
               # Process each changed image
               for filename in $CHANGED_IMAGES; do
                 echo "=== Processing image: $filename ==="
@@ -472,7 +567,7 @@ jobs:
               echo "" >> image_section.md
               echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> image_section.md
             else
-              echo "No changed images found to display." >> image_section.md
+              echo "No changed images to display." >> image_section.md
             fi
             
             echo "" >> image_section.md
@@ -482,14 +577,14 @@ jobs:
             echo "> 🧹 The temporary branch \`$BRANCH_NAME\` will be automatically cleaned up after 7 days." >> image_section.md
             
             # Replace the placeholder in the main report
-            sed -i '/ARTIFACT_DOWNLOAD_INFO/r image_section.md' comparison_report.md
-            sed -i '/ARTIFACT_DOWNLOAD_INFO/d' comparison_report.md
+            sed -i '/IMAGE_EMBEDDING_PLACEHOLDER/r image_section.md' comparison_report.md
+            sed -i '/IMAGE_EMBEDDING_PLACEHOLDER/d' comparison_report.md
             
             echo "✅ Enhanced comparison report generated with embedded images"
           else
             echo "❌ Images were not committed, using fallback"
             # Fallback to artifact download if commit failed
-            sed -i 's|ARTIFACT_DOWNLOAD_INFO|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`'$OUTPUTS_DIR'/`** - New test images\n- **`diffs/`** - Visual differences\n- **`golden/`** - Golden master images\n- **`comparison_report.md`** - This report|' comparison_report.md
+            sed -i 's|IMAGE_EMBEDDING_PLACEHOLDER|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly. Download the complete results:\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`'$OUTPUTS_DIR'/`** - New test images\n- **`diffs/`** - Visual differences\n- **`golden/`** - Golden master images\n- **`comparison_report.md`** - This report|' comparison_report.md
           fi
         else
           echo "No comparison report found"
