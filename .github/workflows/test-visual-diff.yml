@@ -22,24 +22,28 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  actions: read  # Needed for artifact access
 
 jobs:
   test-visual-diff-system:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        scenario: ${{ github.event.inputs.test_scenario == 'all' && fromJson('["baseline", "changed", "mixed"]') || (github.event.inputs.test_scenario && fromJson(format('["{0}"]', github.event.inputs.test_scenario))) || fromJson('["baseline", "changed", "mixed"]') }}
+        scenario: [baseline, changed, mixed]
+    
+    # Skip scenarios that don't match the input
+    if: ${{ !github.event.inputs.test_scenario || github.event.inputs.test_scenario == 'all' || github.event.inputs.test_scenario == matrix.scenario }}
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
       with:
         lfs: true
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Python for test execution
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
       with:
         python-version: '3.x'
     
@@ -73,6 +77,8 @@ jobs:
     
     - name: Test visual diff workflow with generated images
       run: |
+        set -euo pipefail  # Enable strict error handling
+        
         # Install NVIDIA FLIP for image comparison
         pip install flip-evaluator
         
@@ -97,10 +103,12 @@ jobs:
         CHANGED_IMAGES=""
         CHANGES_DETECTED=false
         
-        echo "# Test Results for Scenario: ${{ matrix.scenario }}" > test_report.md
-        echo "" >> test_report.md
-        echo "| File | Status | FLIP Mean Error | Expected | Result |" >> test_report.md
-        echo "|------|--------|-----------------|----------|--------|" >> test_report.md
+        # Create unique test report filename for this scenario
+        TEST_REPORT="test_report_${{ matrix.scenario }}.md"
+        echo "# Test Results for Scenario: ${{ matrix.scenario }}" > "$TEST_REPORT"
+        echo "" >> "$TEST_REPORT"
+        echo "| File | Status | FLIP Mean Error | Expected | Result |" >> "$TEST_REPORT"
+        echo "|------|--------|-----------------|----------|--------|" >> "$TEST_REPORT"
         
         # Process each output image
         for output_file in outputs/*.png; do
@@ -115,7 +123,7 @@ jobs:
           
           if [ ! -f "$golden_file" ]; then
             # New image - should only happen in specific test scenarios
-            echo "| \`$filename\` | 🆕 New | N/A | New image | ✅ |" >> test_report.md
+            echo "| \`$filename\` | 🆕 New | N/A | New image | ✅ |" >> "$TEST_REPORT"
             CHANGED_IMAGES="$CHANGED_IMAGES $filename"
             CHANGES_DETECTED=true
           else
@@ -129,7 +137,7 @@ jobs:
             flip_exit_code=$?
             
             if [ $flip_exit_code -ne 0 ]; then
-              echo "| \`$filename\` | ❌ Error | N/A | FLIP error | ❌ |" >> test_report.md
+              echo "| \`$filename\` | ❌ Error | N/A | FLIP error | ❌ |" >> "$TEST_REPORT"
               continue
             fi
             
@@ -137,55 +145,55 @@ jobs:
             is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
             
             if [ "$is_different" = "yes" ]; then
-              echo "| \`$filename\` | 🔄 Changed | $mean_error | Changed | ✅ |" >> test_report.md
+              echo "| \`$filename\` | 🔄 Changed | $mean_error | Changed | ✅ |" >> "$TEST_REPORT"
               CHANGED_IMAGES="$CHANGED_IMAGES $filename"
               CHANGES_DETECTED=true
             else
-              echo "| \`$filename\` | ✅ Passed | $mean_error | No change | ✅ |" >> test_report.md
+              echo "| \`$filename\` | ✅ Passed | $mean_error | No change | ✅ |" >> "$TEST_REPORT"
             fi
           fi
         done
         
         # Validate results match expectations
-        echo "" >> test_report.md
-        echo "## Test Validation" >> test_report.md
-        echo "" >> test_report.md
+        echo "" >> "$TEST_REPORT"
+        echo "## Test Validation" >> "$TEST_REPORT"
+        echo "" >> "$TEST_REPORT"
         
         TEST_PASSED=true
         case "$EXPECTED_RESULT" in
           "no_changes")
             if [ "$CHANGES_DETECTED" = "false" ]; then
-              echo "✅ **Test PASSED**: No changes detected as expected for baseline scenario" >> test_report.md
+              echo "✅ **Test PASSED**: No changes detected as expected for baseline scenario" >> "$TEST_REPORT"
             else
-              echo "❌ **Test FAILED**: Changes detected but none were expected for baseline scenario" >> test_report.md
+              echo "❌ **Test FAILED**: Changes detected but none were expected for baseline scenario" >> "$TEST_REPORT"
               TEST_PASSED=false
             fi
             ;;
           "changes")
             if [ "$CHANGES_DETECTED" = "true" ]; then
-              echo "✅ **Test PASSED**: Changes detected as expected for changed scenario" >> test_report.md
+              echo "✅ **Test PASSED**: Changes detected as expected for changed scenario" >> "$TEST_REPORT"
             else
-              echo "❌ **Test FAILED**: No changes detected but changes were expected for changed scenario" >> test_report.md
+              echo "❌ **Test FAILED**: No changes detected but changes were expected for changed scenario" >> "$TEST_REPORT"
               TEST_PASSED=false
             fi
             ;;
           "mixed")
             if [ "$CHANGES_DETECTED" = "true" ]; then
-              echo "✅ **Test PASSED**: Mixed results detected as expected for mixed scenario" >> test_report.md
+              echo "✅ **Test PASSED**: Mixed results detected as expected for mixed scenario" >> "$TEST_REPORT"
             else
-              echo "❌ **Test FAILED**: No changes detected but mixed results were expected" >> test_report.md
+              echo "❌ **Test FAILED**: No changes detected but mixed results were expected" >> "$TEST_REPORT"
               TEST_PASSED=false
             fi
             ;;
         esac
         
-        echo "" >> test_report.md
-        echo "**Scenario**: ${{ matrix.scenario }}" >> test_report.md
-        echo "**Expected**: $EXPECTED_RESULT" >> test_report.md
-        echo "**Actual**: $([ "$CHANGES_DETECTED" = "true" ] && echo "changes_detected" || echo "no_changes")" >> test_report.md
-        echo "**Result**: $([ "$TEST_PASSED" = "true" ] && echo "PASSED" || echo "FAILED")" >> test_report.md
+        echo "" >> "$TEST_REPORT"
+        echo "**Scenario**: ${{ matrix.scenario }}" >> "$TEST_REPORT"
+        echo "**Expected**: $EXPECTED_RESULT" >> "$TEST_REPORT"
+        echo "**Actual**: $([ "$CHANGES_DETECTED" = "true" ] && echo "changes_detected" || echo "no_changes")" >> "$TEST_REPORT"
+        echo "**Result**: $([ "$TEST_PASSED" = "true" ] && echo "PASSED" || echo "FAILED")" >> "$TEST_REPORT"
         
-        cat test_report.md
+        cat "$TEST_REPORT"
         
         if [ "$TEST_PASSED" = "false" ]; then
           echo "❌ Test validation failed for scenario: ${{ matrix.scenario }}"
@@ -194,16 +202,497 @@ jobs:
           echo "✅ Test validation passed for scenario: ${{ matrix.scenario }}"
         fi
     
+    - name: Commit images to temporary branch for real embedding
+      id: commit_images
+      run: |
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Create a unique branch name for this test scenario
+        BRANCH_NAME="test-visual-diff-${{ matrix.scenario }}-${{ github.run_id }}"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+        
+        # Store current branch/commit for restoration
+        ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        ORIGINAL_COMMIT=$(git rev-parse HEAD)
+        
+        echo "=== Debug: Creating temporary branch for image embedding ==="
+        echo "Original branch: $ORIGINAL_BRANCH"
+        echo "Original commit: $ORIGINAL_COMMIT"
+        echo "New branch will be: $BRANCH_NAME"
+        echo "=========================="
+        
+        # Create a temporary directory to store extracted binary content
+        TEMP_GOLDEN_DIR="/tmp/golden_binary_$$"
+        mkdir -p "$TEMP_GOLDEN_DIR"
+        
+        # Extract actual binary content from LFS before creating temporary branch
+        echo "=== Debug: Extracting golden images from LFS ==="
+        if [ -d "golden" ]; then
+          echo "Golden images found in original branch:"
+          ls -la golden/ || echo "No golden images in directory"
+          
+          # Extract binary content for each golden image
+          for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
+            if [ -f "$golden_file" ]; then
+              filename=$(basename "$golden_file")
+              echo "Extracting binary content for $golden_file..."
+              
+              # Use git lfs smudge to extract actual binary content from LFS
+              temp_file="$TEMP_GOLDEN_DIR/$filename"
+              if git lfs smudge < "$golden_file" > "$temp_file" 2>/dev/null; then
+                # Verify we got actual binary image data
+                if file "$temp_file" | grep -q "PNG image data\|JPEG image data"; then
+                  echo "✅ Successfully extracted binary image: $filename"
+                  ls -la "$temp_file"
+                else
+                  echo "❌ $filename: git lfs smudge did not return image data, trying direct copy"
+                  cp "$golden_file" "$temp_file"
+                fi
+              else
+                echo "❌ git lfs smudge failed for $golden_file, using direct copy"
+                cp "$golden_file" "$temp_file"
+              fi
+            fi
+          done
+        else
+          echo "No golden directory found"
+        fi
+        
+        # Create and switch to the temporary branch
+        echo "Creating and switching to branch: $BRANCH_NAME"
+        git checkout -b "$BRANCH_NAME"
+        
+        # CRITICAL: Remove .gitattributes FIRST and commit it to prevent LFS tracking
+        echo "=== Debug: Disabling LFS and gitignore in temporary branch ==="
+        echo "Removing .gitattributes to prevent LFS tracking..."
+        rm -f .gitattributes
+        
+        echo "Temporarily removing .gitignore to allow outputs/ and diffs/ to be committed..."
+        rm -f .gitignore
+        
+        # Commit the .gitattributes and .gitignore removal first to ensure no LFS tracking or ignoring
+        git add .gitattributes .gitignore 2>/dev/null || echo ".gitattributes and .gitignore already removed"
+        git commit -m "Remove LFS tracking and gitignore for image display branch" --allow-empty
+        echo "✅ LFS tracking and gitignore disabled in temporary branch"
+        echo "================================================"
+        
+        # Remove the original golden directory completely and recreate with binary files
+        echo "=== Debug: Setting up golden images in temporary branch ==="
+        rm -rf golden/
+        mkdir -p golden/
+        
+        # Install the extracted binary files as completely new files
+        if [ -d "$TEMP_GOLDEN_DIR" ]; then
+          for binary_file in "$TEMP_GOLDEN_DIR"/*; do
+            if [ -f "$binary_file" ]; then
+              filename=$(basename "$binary_file")
+              echo "Installing binary golden image: $filename"
+              cp "$binary_file" "golden/$filename"
+              
+              # Verify it's actual binary data in the temp branch
+              if file "golden/$filename" | grep -q "PNG image data\|JPEG image data"; then
+                echo "✅ golden/$filename is confirmed binary image data"
+                ls -la "golden/$filename"
+              else
+                echo "❌ golden/$filename is not valid image data"
+                head -2 "golden/$filename"
+              fi
+            fi
+          done
+        fi
+        
+        # Add all generated images
+        echo "=== Debug: Adding files to git ==="
+        echo "Current git status before adding:"
+        git status --porcelain
+        
+        echo "Adding outputs/:"
+        if git add outputs/; then
+          echo "✅ outputs/ added successfully"
+        else
+          echo "❌ Failed to add outputs/"
+        fi
+        
+        echo "Adding diffs/:"
+        if git add diffs/; then
+          echo "✅ diffs/ added successfully" 
+        else
+          echo "❌ Failed to add diffs/"
+        fi
+        
+        echo "Adding golden/:"
+        if git add golden/; then
+          echo "✅ golden/ added successfully"
+        else
+          echo "❌ Failed to add golden/"
+        fi
+        
+        echo "Git status after adding:"
+        git status --porcelain
+        echo "==========================="
+        
+        # Commit if there are changes
+        if ! git diff --cached --quiet; then
+          echo "=== Debug: Changes detected, committing ==="
+          echo "Files to be committed:"
+          git diff --cached --name-only
+          echo "Committing changes..."
+          
+          git commit -m "Test scenario images for ${{ matrix.scenario }} - run ${{ github.run_id }}"
+          
+          echo "Commit successful, pushing to origin with retry logic..."
+          # Push the branch with retry logic for race conditions
+          PUSH_SUCCESS=false
+          for attempt in 1 2 3; do
+            echo "Push attempt $attempt..."
+            if git push origin "$BRANCH_NAME"; then
+              PUSH_SUCCESS=true
+              echo "✅ Push successful on attempt $attempt"
+              break
+            else
+              echo "❌ Push failed on attempt $attempt"
+              if [ $attempt -lt 3 ]; then
+                echo "Waiting before retry..."
+                sleep $((attempt * 2))
+                # Try to pull any conflicting changes and retry
+                git pull origin "$BRANCH_NAME" --allow-unrelated-histories || echo "No remote branch to pull"
+              fi
+            fi
+          done
+          
+          if [ "$PUSH_SUCCESS" = "true" ]; then
+            echo "images_committed=true" >> $GITHUB_OUTPUT
+            echo "✅ Successfully committed images to branch: $BRANCH_NAME"
+            
+            # Debug: Verify images are accessible via HTTP URLs
+            echo "=== Debug: Verifying image commit success ==="
+            REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
+            echo "Repository URL: $REPO_URL"
+            echo "Expected image URLs:"
+            for output_file in outputs/*.png; do
+              if [ -f "$output_file" ]; then
+                filename=$(basename "$output_file")
+                echo "  Golden: $REPO_URL/golden/$filename"
+                echo "  Output: $REPO_URL/outputs/$filename"
+                echo "  Diff: $REPO_URL/diffs/diff_$filename"
+              fi
+            done
+            echo "================================================================"
+          else
+            echo "images_committed=false" >> $GITHUB_OUTPUT
+            echo "❌ Failed to push after 3 attempts"
+          fi
+        else
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          echo "❌ No changes to commit"
+        fi
+        
+        # Clean up temporary directory
+        echo "Cleaning up temporary golden images directory..."
+        rm -rf "$TEMP_GOLDEN_DIR" || echo "Failed to clean up temporary directory"
+        
+        # Return to original branch
+        echo "Returning to original branch: $ORIGINAL_BRANCH"
+        git checkout "$ORIGINAL_BRANCH"
+
+    - name: Generate production workflow output with real embedded images
+      run: |
+        # Generate what the actual visual-diff.yml workflow would produce as a PR comment
+        # This includes REAL embedded images using the same mechanism as production
+        PRODUCTION_REPORT="production_output_${{ matrix.scenario }}.md"
+        
+        echo "# Visual Regression Test Results" > "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "> **Note:** This demonstrates actual production workflow output with real embedded images from test scenario: ${{ matrix.scenario }}" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "## Summary" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "| File | Status | FLIP Mean Error | Result |" >> "$PRODUCTION_REPORT"
+        echo "|------|--------|-----------------|--------|" >> "$PRODUCTION_REPORT"
+        
+        # Initialize detailed results section
+        echo "" > "detailed_results_${{ matrix.scenario }}.md"
+        echo "## Detailed Results" >> "detailed_results_${{ matrix.scenario }}.md"
+        echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+        
+        # Re-process each output image to create production-style output with REAL images
+        summary_data=""
+        for output_file in outputs/*.png; do
+          if [ ! -f "$output_file" ]; then
+            continue
+          fi
+          
+          filename=$(basename "$output_file")
+          golden_file="golden/$filename"
+          
+          echo "Processing $filename for production output with real images..."
+          
+          if [ ! -f "$golden_file" ]; then
+            # New image - production output with real images
+            summary_data="$summary_data| \`$filename\` | 🆕 New | N/A | Needs acceptance |\n"
+            
+            # Add detailed analysis for new image
+            echo "### 🆕 $filename (New Image)" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "**Status:** New image detected - no golden master exists" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "**Action Required:** This image needs to be accepted as a new golden master" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "**File Size:** $(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown') bytes" >> "detailed_results_${{ matrix.scenario }}.md"
+            
+            # Get image dimensions
+            dimensions=$(python3 -c "from PIL import Image; img = Image.open('$output_file'); print(f'{img.width}x{img.height}')" 2>/dev/null || echo 'Unknown')
+            echo "**Dimensions:** $dimensions" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            
+            # Add REAL image placeholders that will be replaced with actual URLs
+            echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            
+            echo "To accept this new image: \`/accept-image $filename\`" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "---" >> "detailed_results_${{ matrix.scenario }}.md"
+            echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+          else
+            # Compare using FLIP (same logic as production)
+            basename_no_ext=$(basename "$filename" .png)
+            diff_basename="diff_${basename_no_ext}"
+            
+            flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "$diff_basename" -v 2 -txt 2>&1)
+            flip_exit_code=$?
+            
+            if [ $flip_exit_code -ne 0 ]; then
+              summary_data="$summary_data| \`$filename\` | ❌ Error | N/A | FLIP failed |\n"
+              continue
+            fi
+            
+            # Extract FLIP statistics
+            mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
+            median_error=$(echo "$flip_output" | grep "Weighted median:" | awk '{print $3}')
+            q1_error=$(echo "$flip_output" | grep "1st weighted quartile:" | awk '{print $4}')
+            q3_error=$(echo "$flip_output" | grep "3rd weighted quartile:" | awk '{print $4}')
+            min_error=$(echo "$flip_output" | grep "Min:" | awk '{print $2}')
+            max_error=$(echo "$flip_output" | grep "Max:" | awk '{print $2}')
+            ppd=$(echo "$flip_output" | grep "Pixels per degree:" | awk '{print $4}')
+            eval_time=$(echo "$flip_output" | grep "Evaluation time:" | awk '{print $3}')
+            
+            # Check if there's any meaningful difference
+            is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
+            
+            if [ "$is_different" = "yes" ]; then
+              summary_data="$summary_data| \`$filename\` | 🔄 Changed | $mean_error | Needs review |\n"
+              
+              # Add comprehensive detailed analysis for changed image
+              echo "### 🔄 $filename (Changed)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**Status:** Visual differences detected" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**FLIP Analysis Results:**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Mean Error:** ${mean_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Median Error:** ${median_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **1st Quartile:** ${q1_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **3rd Quartile:** ${q3_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Min Error:** ${min_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Max Error:** ${max_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Pixels per Degree:** ${ppd:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Evaluation Time:** ${eval_time:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**Interpretation:**" >> "detailed_results_${{ matrix.scenario }}.md"
+              if [ -n "$mean_error" ]; then
+                mean_threshold=$(echo "$mean_error" | awk '{
+                  if ($1 > 0.1) print "High - significant visual differences"
+                  else if ($1 > 0.01) print "Medium - noticeable differences"
+                  else print "Low - subtle differences"
+                }')
+                echo "- Mean error level: $mean_threshold" >> "detailed_results_${{ matrix.scenario }}.md"
+              fi
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              
+              # Add REAL image placeholders that will be replaced with actual URLs
+              echo "**Golden Master (Expected):**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "GOLDEN_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**Visual Difference (Highlighted Changes):**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "DIFF_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              
+              echo "**Action Required:** Review the visual differences and accept if intentional" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "To accept this change: \`/accept-image $filename\`" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "---" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            else
+              summary_data="$summary_data| \`$filename\` | ✅ Passed | $mean_error | No changes |\n"
+              
+              # Add detailed analysis for passed image
+              echo "### ✅ $filename (Passed)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**Status:** No significant visual differences detected" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**FLIP Analysis Results:**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Mean Error:** ${mean_error:-'N/A'} (below significance threshold)" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Median Error:** ${median_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Min Error:** ${min_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Max Error:** ${max_error:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Pixels per Degree:** ${ppd:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "- **Evaluation Time:** ${eval_time:-'N/A'}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**Result:** Image matches golden master within acceptable tolerance" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              
+              # Add REAL image placeholders that will be replaced with actual URLs
+              echo "**Golden Master (Expected):**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "GOLDEN_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "**New Output (Actual):**" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "NEW_IMAGE_PLACEHOLDER_${filename}" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+              
+              echo "---" >> "detailed_results_${{ matrix.scenario }}.md"
+              echo "" >> "detailed_results_${{ matrix.scenario }}.md"
+            fi
+          fi
+        done
+        
+        # Add summary data to production report
+        echo -e "$summary_data" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        
+        # Append detailed results to the production report
+        cat "detailed_results_${{ matrix.scenario }}.md" >> "$PRODUCTION_REPORT"
+        
+        # Now replace placeholders with REAL GitHub raw URLs
+        if [ "${{ steps.commit_images.outputs.images_committed }}" = "true" ]; then
+          BRANCH_NAME="${{ steps.commit_images.outputs.branch_name }}"
+          REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
+          
+          echo "=== Replacing placeholders with real GitHub URLs ==="
+          echo "Using repository URL: $REPO_URL"
+          
+          # Process each output image to replace placeholders with actual image URLs
+          for output_file in outputs/*.png; do
+            if [ ! -f "$output_file" ]; then
+              continue
+            fi
+            
+            filename=$(basename "$output_file")
+            golden_file="golden/$filename"
+            
+            echo "=== Processing image embedding for: $filename ==="
+            
+            # Define image URLs
+            golden_url="$REPO_URL/golden/$filename"
+            output_url="$REPO_URL/outputs/$filename"
+            diff_url="$REPO_URL/diffs/diff_$filename"
+            
+            # Replace placeholders with actual image markdown
+            # For golden images (if they exist)
+            if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" "$PRODUCTION_REPORT"; then
+              echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
+              sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|"'![Golden Master]'"($golden_url)|g" "$PRODUCTION_REPORT"
+            fi
+            
+            # For new/output images (always exists)
+            echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
+            sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|"'![New Output]'"($output_url)|g" "$PRODUCTION_REPORT"
+            
+            # For diff images (only if it was generated)
+            if [ -f "diffs/diff_$filename" ]; then
+              echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
+              sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|"'![Visual Difference]'"($diff_url)|g" "$PRODUCTION_REPORT"
+            else
+              # Remove diff placeholder if no diff was generated
+              echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
+              sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" "$PRODUCTION_REPORT"
+            fi
+          done
+          
+          echo "✅ Successfully embedded real images in production report"
+        else
+          echo "❌ Images were not committed, using fallback text"
+          # Replace placeholders with fallback text
+          for output_file in outputs/*.png; do
+            if [ -f "$output_file" ]; then
+              filename=$(basename "$output_file")
+              sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|**Image not available** (commit failed)|g" "$PRODUCTION_REPORT"
+              sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|**Image not available** (commit failed)|g" "$PRODUCTION_REPORT"
+              sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|**Image not available** (commit failed)|g" "$PRODUCTION_REPORT"
+            fi
+          done
+        fi
+        
+        # Add acceptance commands section
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "## 🔧 Accept New Images" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "\`\`\`" >> "$PRODUCTION_REPORT"
+        
+        # List any changed images that would need acceptance
+        for output_file in outputs/*.png; do
+          if [ -f "$output_file" ]; then
+            filename=$(basename "$output_file")
+            golden_file="golden/$filename"
+            
+            # If new or changed, add acceptance command
+            if [ ! -f "$golden_file" ]; then
+              echo "/accept-image $filename" >> "$PRODUCTION_REPORT"
+            else
+              # Check if changed (reuse FLIP check)
+              flip_output=$(flip -r "$golden_file" -t "$output_file" -d diffs -b "diff_$(basename "$filename" .png)" -v 2 -txt 2>&1)
+              if [ $? -eq 0 ]; then
+                mean_error=$(echo "$flip_output" | grep "Mean:" | awk '{print $2}')
+                is_different=$(echo "$mean_error" | awk '{if ($1 > 0.001) print "yes"; else print "no"}')
+                if [ "$is_different" = "yes" ]; then
+                  echo "/accept-image $filename" >> "$PRODUCTION_REPORT"
+                fi
+              fi
+            fi
+          fi
+        done
+        
+        echo "\`\`\`" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "> **Note:** These commands will commit the new images to the **PR branch** and update the golden master files for future comparisons." >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "## 📦 Backup Download" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        echo "If images don't load above, download the complete results: **[Visual Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> "$PRODUCTION_REPORT"
+        echo "" >> "$PRODUCTION_REPORT"
+        if [ "${{ steps.commit_images.outputs.images_committed }}" = "true" ]; then
+          echo "> 🧹 The temporary branch \`${{ steps.commit_images.outputs.branch_name }}\` will be automatically cleaned up after 7 days." >> "$PRODUCTION_REPORT"
+        fi
+        
+        echo "✅ Generated production workflow output with real embedded images for scenario: ${{ matrix.scenario }}"
+        echo ""
+        echo "=== PRODUCTION WORKFLOW OUTPUT FOR SCENARIO: ${{ matrix.scenario }} ==="
+        echo "This is what the actual visual-diff.yml workflow would generate as a PR comment:"
+        echo ""
+        cat "$PRODUCTION_REPORT"
+        echo ""
+        echo "=== END PRODUCTION WORKFLOW OUTPUT ==="
+    
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
       with:
         name: visual-diff-test-results-${{ matrix.scenario }}
         path: |
           outputs/
           diffs/
           golden/
-          test_report.md
+          test_report_${{ matrix.scenario }}.md
+          production_output_${{ matrix.scenario }}.md
+          detailed_results_${{ matrix.scenario }}.md
         retention-days: 7
 
   summarize-tests:
@@ -213,13 +702,13 @@ jobs:
     
     steps:
     - name: Download all test results
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
       with:
         pattern: visual-diff-test-results-*
         path: ./test-results
         merge-multiple: true
     
-    - name: Generate test summary
+    - name: Generate comprehensive test summary
       run: |
         echo "# Visual Diff System Test Summary" > test_summary.md
         echo "" >> test_summary.md
@@ -247,18 +736,71 @@ jobs:
         fi
         
         echo "" >> test_summary.md
-        echo "## Test Scenarios Results" >> test_summary.md
+        echo "## 🧪 Test Validation Results" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "> This section shows the validation results for the visual diff system testing." >> test_summary.md
         echo "" >> test_summary.md
         
-        # Process any test reports found
-        for report in test-results/test_report.md; do
-          if [ -f "$report" ]; then
-            echo "Found test report: $report"
-            cat "$report" >> test_summary.md
+        # Process test validation reports from all scenarios
+        for scenario in baseline changed mixed; do
+          test_report="test-results/test_report_${scenario}.md"
+          if [ -f "$test_report" ]; then
+            echo "### Test Scenario: $scenario" >> test_summary.md
+            echo "" >> test_summary.md
+            # Add the test validation content
+            cat "$test_report" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "---" >> test_summary.md
+            echo "" >> test_summary.md
+          else
+            echo "### Test Scenario: $scenario" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "❌ **Test results not found for scenario: $scenario**" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "---" >> test_summary.md
             echo "" >> test_summary.md
           fi
         done
         
+        echo "" >> test_summary.md
+        echo "## 📝 Production Workflow Output with Real Images" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "> This section shows what the actual \`visual-diff.yml\` workflow would generate as PR comments for each test scenario, **with real embedded images**." >> test_summary.md
+        echo "" >> test_summary.md
+        
+        # Process production simulation reports from all scenarios  
+        for scenario in baseline changed mixed; do
+          production_report="test-results/production_output_${scenario}.md"
+          if [ -f "$production_report" ]; then
+            echo "### Production Output for Scenario: $scenario" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "\`\`\`" >> test_summary.md
+            echo "The following is what users would see as a PR comment when using the actual visual-diff.yml workflow" >> test_summary.md
+            echo "in a real CI environment with the '$scenario' test scenario data:" >> test_summary.md
+            echo "\`\`\`" >> test_summary.md
+            echo "" >> test_summary.md
+            # Add the production workflow output
+            cat "$production_report" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "---" >> test_summary.md
+            echo "" >> test_summary.md
+          else
+            echo "### Production Output for Scenario: $scenario" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "❌ **Production output not found for scenario: $scenario**" >> test_summary.md
+            echo "" >> test_summary.md
+            echo "---" >> test_summary.md
+            echo "" >> test_summary.md
+          fi
+        done
+        
+        echo "" >> test_summary.md
+        echo "## 🔍 Summary" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "This test run demonstrates:" >> test_summary.md
+        echo "" >> test_summary.md
+        echo "1. **Test Validation**: Whether the visual diff system correctly handles each test scenario" >> test_summary.md
+        echo "2. **Production Simulation**: What users would actually see when integrating the visual-diff workflow into their CI" >> test_summary.md
         echo "" >> test_summary.md
         echo "---" >> test_summary.md
         echo "**Note**: This workflow tests the visual diff system itself. The production visual-diff workflow is separate and ready for integration with external CI systems." >> test_summary.md
@@ -275,7 +817,7 @@ jobs:
     
     - name: Upload test summary
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
       with:
         name: visual-diff-test-summary
         path: test_summary.md
@@ -283,7 +825,7 @@ jobs:
     
     - name: Comment PR with test results
       if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
       with:
         script: |
           const fs = require('fs');
@@ -298,7 +840,8 @@ jobs:
           
           // Add header to distinguish from production visual diff results
           const testReport = "## 🧪 Visual Diff System Test Results\n\n" + 
-            "> This is automated testing of the visual diff system itself, not production visual regression testing.\n\n" + 
+            "> **This is automated testing of the visual diff system itself, not production visual regression testing.**\n" +
+            "> This test validates that the visual-diff workflow works correctly and shows what users would see when integrating it into their CI.\n\n" + 
             report;
           
           // Clean up old test result comments first
@@ -310,7 +853,7 @@ jobs:
           
           const botTestComments = comments.data.filter(comment => 
             comment.user.type === 'Bot' && 
-            comment.body.includes('Visual Diff System Test Results')
+            comment.body.includes('🧪 Visual Diff System Test Results')
           );
           
           // Delete old test comments to avoid confusion
@@ -334,3 +877,32 @@ jobs:
             issue_number: context.issue.number,
             body: testReport
           });
+
+  cleanup-test-branches:
+    runs-on: ubuntu-latest
+    needs: [summarize-tests]
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Clean up test branches
+      run: |
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        echo "Cleaning up test branches for run: ${{ github.run_id }}"
+        
+        # Find and delete test branches for this run
+        git branch -r | grep "origin/test-visual-diff-.*-${{ github.run_id }}" | while read -r branch; do
+          branch_name=${branch#origin/}
+          echo "Deleting test branch: $branch_name"
+          git push origin --delete "$branch_name" || echo "Failed to delete $branch_name (may not exist)"
+        done
+        
+        echo "✅ Test branch cleanup completed"

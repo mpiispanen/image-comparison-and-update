@@ -1,0 +1,5 @@
+# Python dependencies for visual regression testing
+Pillow>=10.0.0
+numpy>=1.24.0
+flip-evaluator>=1.4.0
+PyYAML>=6.0.0
