@@ -43,7 +43,7 @@ jobs:
         mkdir -p golden
     
     - name: Download artifact containing test images
-      if: ${{ inputs.artifact_name != '' }}
+      if: ${{ inputs.artifact_name && inputs.artifact_name != '' }}
       uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
       with:
         name: ${{ inputs.artifact_name }}
