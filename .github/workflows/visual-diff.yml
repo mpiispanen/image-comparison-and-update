@@ -8,6 +8,19 @@ on:
         required: false
         default: 'outputs'
         type: string
+      artifact_name:
+        description: 'Name of artifact to download containing test images (optional)'
+        required: false
+        type: string
+      test_mode:
+        description: 'Enable test mode to generate sample images if none exist (for testing only)'
+        required: false
+        default: false
+        type: boolean
+      artifact_suffix:
+        description: 'Optional suffix to make artifact names unique when running multiple instances'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -37,6 +50,134 @@ jobs:
       run: |
         mkdir -p diffs
         mkdir -p golden
+    
+    - name: List available artifacts (debug)
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
+      run: |
+        echo "=== Artifact Debug Information ==="
+        echo "Requested artifact name: ${{ inputs.artifact_name }}"
+        echo "Output directory: ${{ inputs.outputs_directory || 'outputs' }}"
+        echo "Workflow context:"
+        echo "  github.repository: ${{ github.repository }}"
+        echo "  github.run_id: ${{ github.run_id }}"
+        echo "  github.run_number: ${{ github.run_number }}"
+        echo "==================================="
+    
+    - name: Download artifact containing test images
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ inputs.outputs_directory || 'outputs' }}
+      continue-on-error: false
+      # Add a small retry mechanism for potential timing issues
+      timeout-minutes: 5
+    
+    - name: Verify artifact download
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
+      run: |
+        set -euo pipefail
+        
+        OUTPUTS_DIR="${{ inputs.outputs_directory || 'outputs' }}"
+        
+        echo "=== Artifact Download Verification ==="
+        echo "Artifact name: ${{ inputs.artifact_name }}"
+        echo "Download path: $OUTPUTS_DIR"
+        echo "Directory contents:"
+        ls -la "$OUTPUTS_DIR/" || echo "Directory not found"
+        echo "====================================="
+        
+        # Check if any files were downloaded
+        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR/" 2>/dev/null)" ]; then
+          echo "❌ Artifact download failed - no files found in $OUTPUTS_DIR/"
+          echo "This could indicate:"
+          echo "  1. The artifact '${{ inputs.artifact_name }}' doesn't exist"
+          echo "  2. The artifact is empty"
+          echo "  3. Permission issues accessing the artifact"
+          echo "  4. Timing issues (artifact not ready yet)"
+          exit 1
+        else
+          echo "✅ Artifact download successful - found files in $OUTPUTS_DIR/"
+        fi
+    
+    - name: Setup Python for test mode (if needed)
+      if: ${{ inputs.test_mode && !inputs.artifact_name }}
+      uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+      with:
+        python-version: '3.x'
+    
+    - name: Install Python dependencies for test mode
+      if: ${{ inputs.test_mode && !inputs.artifact_name }}
+      run: |
+        python -m pip install --upgrade pip
+        pip install Pillow>=10.0.0
+    
+    - name: Generate test images for test mode
+      if: ${{ inputs.test_mode && !inputs.artifact_name }}
+      run: |
+        export TEST_SCENARIO="baseline"
+        echo "🧪 TEST MODE: Generating sample test images for backward compatibility testing..."
+        
+        # Create a simple test image generator
+        cat > generate_simple_test_images.py << 'EOF'
+        import os
+        from PIL import Image, ImageDraw, ImageFont
+        import random
+        
+        def create_test_image(filename, text, width=400, height=300):
+            # Set seed for reproducible images
+            random.seed(42)
+            
+            image = Image.new('RGB', (width, height), (255, 255, 255))
+            draw = ImageDraw.Draw(image)
+            
+            # Draw simple shapes
+            draw.rectangle([50, 50, width-50, height-50], outline=(100, 150, 200), width=3)
+            draw.ellipse([100, 100, width-100, height-100], outline=(100, 150, 200), width=2)
+            
+            # Add text
+            font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            x = (width - text_width) // 2
+            y = (height - text_height) // 2
+            draw.text((x, y), text, fill=(0, 0, 0), font=font)
+            
+            # Add some random elements
+            for i in range(3):
+                x1, y1 = random.randint(0, width), random.randint(0, height)
+                x2, y2 = x1 + random.randint(10, 30), y1 + random.randint(10, 30)
+                draw.rectangle([x1, y1, x2, y2], fill=(100, 150, 200))
+            
+            return image
+        
+        # Ensure outputs directory exists
+        outputs_dir = '${{ inputs.outputs_directory || 'outputs' }}'
+        os.makedirs(outputs_dir, exist_ok=True)
+        
+        # Generate test images
+        test_cases = [
+            ('ui-main-screen.png', 'Main Screen UI'),
+            ('ui-settings-dialog.png', 'Settings Dialog'),
+            ('ui-dashboard.png', 'Dashboard View')
+        ]
+        
+        for filename, text in test_cases:
+            print(f"Generating test image: {filename}")
+            image = create_test_image(filename, text)
+            output_path = os.path.join(outputs_dir, filename)
+            image.save(output_path)
+            print(f"Saved {output_path}")
+        
+        print("✅ Test images generated successfully")
+        EOF
+        
+        # Run the test image generator
+        python3 generate_simple_test_images.py
+        
+        # Verify images were created
+        ls -la ${{ inputs.outputs_directory || 'outputs' }}/
     
     - name: Check for existing test images
       id: check_images
@@ -325,9 +466,9 @@ jobs:
         fi
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      uses: actions/upload-artifact@v4
       with:
-        name: visual-test-results-${{ github.event.pull_request.number || github.run_number }}
+        name: visual-test-results-${{ github.event.pull_request.number || github.run_number }}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}
         path: |
           ${{ steps.check_images.outputs.outputs_dir }}/
           diffs/
@@ -358,7 +499,7 @@ jobs:
         echo "=============================================="
         
         # Create a unique branch name for this PR and run
-        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}"
+        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}"
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
         
         # Store current branch/commit for restoration
@@ -784,7 +925,7 @@ jobs:
 
     - name: Comment PR with results
       if: steps.compare.outputs.changes_detected == 'true'
-      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
+      uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');
@@ -836,7 +977,7 @@ jobs:
     
     - name: Comment PR with success
       if: steps.compare.outputs.changes_detected == 'false'
-      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
+      uses: actions/github-script@v7
       with:
         script: |
           const report = "✅ **Visual tests passed!** No differences detected.\n\n**Test Run:** " + new Date().toISOString().replace('T', ' ').substr(0, 19) + " UTC";
