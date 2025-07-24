@@ -17,6 +17,10 @@ on:
         required: false
         default: false
         type: boolean
+      artifact_suffix:
+        description: 'Optional suffix to make artifact names unique when running multiple instances'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -464,7 +468,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: visual-test-results-${{ github.event.pull_request.number || github.run_number }}
+        name: visual-test-results-${{ github.event.pull_request.number || github.run_number }}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}
         path: |
           ${{ steps.check_images.outputs.outputs_dir }}/
           diffs/
@@ -495,7 +499,7 @@ jobs:
         echo "=============================================="
         
         # Create a unique branch name for this PR and run
-        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}"
+        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}"
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
         
         # Store current branch/commit for restoration
