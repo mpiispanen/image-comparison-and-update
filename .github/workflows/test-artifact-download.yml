@@ -58,6 +58,7 @@ jobs:
         name: test-images-for-artifact-download
         path: outputs/
         retention-days: 1
+        if-no-files-found: error
 
   test-artifact-download-workflow:
     needs: generate-and-upload-images

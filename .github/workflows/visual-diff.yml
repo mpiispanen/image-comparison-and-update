@@ -48,11 +48,41 @@ jobs:
         mkdir -p golden
     
     - name: Download artifact containing test images
-      if: ${{ inputs.artifact_name }}
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
       uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.artifact_name }}
         path: ${{ inputs.outputs_directory || 'outputs' }}
+      continue-on-error: false
+      # Add a small retry mechanism for potential timing issues
+      timeout-minutes: 5
+    
+    - name: Verify artifact download
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
+      run: |
+        set -euo pipefail
+        
+        OUTPUTS_DIR="${{ inputs.outputs_directory || 'outputs' }}"
+        
+        echo "=== Artifact Download Verification ==="
+        echo "Artifact name: ${{ inputs.artifact_name }}"
+        echo "Download path: $OUTPUTS_DIR"
+        echo "Directory contents:"
+        ls -la "$OUTPUTS_DIR/" || echo "Directory not found"
+        echo "====================================="
+        
+        # Check if any files were downloaded
+        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR/" 2>/dev/null)" ]; then
+          echo "❌ Artifact download failed - no files found in $OUTPUTS_DIR/"
+          echo "This could indicate:"
+          echo "  1. The artifact '${{ inputs.artifact_name }}' doesn't exist"
+          echo "  2. The artifact is empty"
+          echo "  3. Permission issues accessing the artifact"
+          echo "  4. Timing issues (artifact not ready yet)"
+          exit 1
+        else
+          echo "✅ Artifact download successful - found files in $OUTPUTS_DIR/"
+        fi
     
     - name: Setup Python for test mode (if needed)
       if: ${{ inputs.test_mode && !inputs.artifact_name }}
