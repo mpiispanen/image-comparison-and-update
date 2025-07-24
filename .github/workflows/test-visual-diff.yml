@@ -683,7 +683,7 @@ jobs:
     
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      uses: actions/upload-artifact@v4
       with:
         name: visual-diff-test-results-${{ matrix.scenario }}
         path: |
@@ -702,7 +702,7 @@ jobs:
     
     steps:
     - name: Download all test results
-      uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+      uses: actions/download-artifact@v4
       with:
         pattern: visual-diff-test-results-*
         path: ./test-results
@@ -817,7 +817,7 @@ jobs:
     
     - name: Upload test summary
       if: always()
-      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      uses: actions/upload-artifact@v4
       with:
         name: visual-diff-test-summary
         path: test_summary.md
