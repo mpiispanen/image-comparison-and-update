@@ -47,6 +47,18 @@ jobs:
         mkdir -p diffs
         mkdir -p golden
     
+    - name: List available artifacts (debug)
+      if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
+      run: |
+        echo "=== Artifact Debug Information ==="
+        echo "Requested artifact name: ${{ inputs.artifact_name }}"
+        echo "Output directory: ${{ inputs.outputs_directory || 'outputs' }}"
+        echo "Workflow context:"
+        echo "  github.repository: ${{ github.repository }}"
+        echo "  github.run_id: ${{ github.run_id }}"
+        echo "  github.run_number: ${{ github.run_number }}"
+        echo "==================================="
+    
     - name: Download artifact containing test images
       if: ${{ inputs.artifact_name != '' && inputs.artifact_name != null }}
       uses: actions/download-artifact@v4
