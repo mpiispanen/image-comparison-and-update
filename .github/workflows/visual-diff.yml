@@ -921,7 +921,7 @@ jobs:
 
     - name: Comment PR with results
       if: steps.compare.outputs.changes_detected == 'true'
-      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
+      uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');
@@ -973,7 +973,7 @@ jobs:
     
     - name: Comment PR with success
       if: steps.compare.outputs.changes_detected == 'false'
-      uses: actions/github-script@60a0d83039c74a4adc4458365330bdf5c1de5c6b # v7.0.1
+      uses: actions/github-script@v7
       with:
         script: |
           const report = "✅ **Visual tests passed!** No differences detected.\n\n**Test Run:** " + new Date().toISOString().replace('T', ' ').substr(0, 19) + " UTC";
