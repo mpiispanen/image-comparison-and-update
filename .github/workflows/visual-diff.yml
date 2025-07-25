@@ -966,14 +966,12 @@ jobs:
           const fs = require('fs');
           const report = fs.readFileSync('comparison_report.md', 'utf8');
           
-          // Check if images were successfully committed
+          // Check if images were successfully committed (for logging purposes)
           const imagesCommitted = '${{ steps.commit_images.outputs.images_committed }}' === 'true';
+          console.log(`Images committed successfully: ${imagesCommitted}`);
           
-          if (!imagesCommitted) {
-            // Fail the workflow if images couldn't be embedded
-            core.setFailed('Visual regression testing found differences, but images could not be committed for display. This is considered a failure.');
-            return;
-          }
+          // Always create a comment regardless of image commit status
+          // The fallback replacement in the previous step handles the case when images can't be embedded
           
           // Clean up old bot comments first
           const comments = await github.rest.issues.listComments({
