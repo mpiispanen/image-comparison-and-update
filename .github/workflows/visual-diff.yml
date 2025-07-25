@@ -953,6 +953,40 @@ jobs:
         fi
         echo "=================================="
     
+    - name: Debug GitHub context and workflow execution
+      if: always()
+      run: |
+        echo "=== Debug: GitHub Context Information ==="
+        echo "Event name: ${{ github.event_name }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Ref: ${{ github.ref }}"
+        echo "Head ref: ${{ github.head_ref }}"
+        echo "Base ref: ${{ github.base_ref }}"
+        echo "Run ID: ${{ github.run_id }}"
+        echo "Run number: ${{ github.run_number }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "SHA: ${{ github.sha }}"
+        echo ""
+        echo "Pull request context:"
+        echo "  PR number: ${{ github.event.pull_request.number || 'N/A' }}"
+        echo "  Issue number: ${{ github.event.issue.number || 'N/A' }}"
+        echo ""
+        echo "Workflow context:"
+        echo "  Workflow name: ${{ github.workflow }}"
+        echo "  Job name: ${{ github.job }}"
+        echo "  Step name: Debug GitHub context and workflow execution"
+        echo ""
+        echo "Expected behavior:"
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "  ✅ Running in pull_request context - PR comments should work"
+        elif [ "${{ github.event.pull_request.number }}" != "" ]; then
+          echo "  ✅ PR number available - PR comments should work"
+        else
+          echo "  ⚠️  Not in pull_request context - PR comments will be logged to console instead"
+          echo "     This is normal for push events, workflow_dispatch, or scheduled runs"
+        fi
+        echo "=========================================="
+
     - name: Debug outputs before commenting
       run: |
         echo "=== Debug Step Outputs ==="
@@ -992,6 +1026,39 @@ jobs:
       with:
         script: |
           const fs = require('fs');
+          
+          // Check if we're in a pull request context
+          console.log('=== Debug: GitHub Context Information ===');
+          console.log(`Event name: ${context.eventName}`);
+          console.log(`Issue number: ${context.issue?.number || 'undefined'}`);
+          console.log(`Payload issue: ${context.payload.issue?.number || 'undefined'}`);
+          console.log(`Payload pull_request: ${context.payload.pull_request?.number || 'undefined'}`);
+          console.log(`Repository: ${context.repo.owner}/${context.repo.repo}`);
+          console.log('==========================================');
+          
+          // Determine if we can create a comment
+          let issueNumber = null;
+          let canComment = false;
+          
+          // Try multiple ways to get the issue/PR number
+          if (context.issue?.number) {
+            issueNumber = context.issue.number;
+            canComment = true;
+            console.log(`Found issue number from context.issue: ${issueNumber}`);
+          } else if (context.payload.pull_request?.number) {
+            issueNumber = context.payload.pull_request.number;
+            canComment = true;
+            console.log(`Found issue number from payload.pull_request: ${issueNumber}`);
+          } else if (context.payload.issue?.number) {
+            issueNumber = context.payload.issue.number;
+            canComment = true;
+            console.log(`Found issue number from payload.issue: ${issueNumber}`);
+          } else {
+            console.log('❌ No issue/PR number found - cannot create comment');
+            console.log('This is likely because the workflow was not triggered by a pull request');
+            console.log('Event type:', context.eventName);
+            canComment = false;
+          }
           
           // Determine what type of report to create
           let report;
@@ -1044,40 +1111,79 @@ jobs:
                      '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
           }
           
-          // Clean up old bot comments first
-          const comments = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number
-          });
-          
-          const botComments = comments.data.filter(comment => 
-            comment.user.type === 'Bot' && 
-            (comment.body.includes('Visual Regression Test') ||
-             comment.body.includes('Visual tests passed'))
-          );
-          
-          // Delete old bot comments to avoid confusion
-          for (const comment of botComments) {
-            try {
-              await github.rest.issues.deleteComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: comment.id
-              });
-              console.log(`Deleted old bot comment: ${comment.id}`);
-            } catch (error) {
-              console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
-            }
+          if (!canComment) {
+            // Cannot create comment - log the report instead
+            console.log('===============================================');
+            console.log('VISUAL DIFF RESULTS (Comment could not be created):');
+            console.log('===============================================');
+            console.log(report);
+            console.log('===============================================');
+            console.log('');
+            console.log('💡 To see visual diff results as PR comments:');
+            console.log('   - Ensure this workflow is triggered by a pull_request event');
+            console.log('   - Or call this workflow from a workflow that has pull request context');
+            console.log('');
+            console.log('📦 Visual test results are still available as workflow artifacts');
+            console.log('   Download link: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}');
+            return;
           }
           
-          // Always create a new comment
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-            body: report
-          });
+          try {
+            // Clean up old bot comments first
+            console.log(`Attempting to list comments for issue/PR #${issueNumber}`);
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber
+            });
+            
+            const botComments = comments.data.filter(comment => 
+              comment.user.type === 'Bot' && 
+              (comment.body.includes('Visual Regression Test') ||
+               comment.body.includes('Visual tests passed'))
+            );
+            
+            console.log(`Found ${botComments.length} old bot comments to clean up`);
+            
+            // Delete old bot comments to avoid confusion
+            for (const comment of botComments) {
+              try {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id
+                });
+                console.log(`Deleted old bot comment: ${comment.id}`);
+              } catch (error) {
+                console.log(`Failed to delete comment ${comment.id}: ${error.message}`);
+              }
+            }
+            
+            // Always create a new comment
+            console.log(`Creating new comment on issue/PR #${issueNumber}`);
+            const newComment = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: report
+            });
+            
+            console.log(`✅ Successfully created comment: ${newComment.data.html_url}`);
+            
+          } catch (error) {
+            console.error('❌ Failed to create PR comment:', error.message);
+            console.error('Error details:', error);
+            
+            // Log the report since comment creation failed
+            console.log('===============================================');
+            console.log('VISUAL DIFF RESULTS (Comment creation failed):');
+            console.log('===============================================');
+            console.log(report);
+            console.log('===============================================');
+            console.log('');
+            console.log('📦 Visual test results are available as workflow artifacts');
+            console.log('   Download link: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}');
+          }
 
   cleanup-old-branches:
     runs-on: ubuntu-latest
