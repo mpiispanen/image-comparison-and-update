@@ -72,6 +72,7 @@ jobs:
       outputs_directory: 'outputs'
       artifact_name: 'test-images-for-artifact-download'
       artifact_suffix: 'artifact-test'
+      pr_number: ${{ github.event.pull_request.number }}
 
   test-backward-compatibility:
     uses: ./.github/workflows/visual-diff.yml
@@ -84,6 +85,7 @@ jobs:
       outputs_directory: 'outputs'
       test_mode: true
       artifact_suffix: 'compatibility-test'
+      pr_number: ${{ github.event.pull_request.number }}
       # artifact_name is intentionally not provided to test backward compatibility
 
   validate-tests:

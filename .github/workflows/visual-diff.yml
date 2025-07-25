@@ -21,6 +21,10 @@ on:
         description: 'Optional suffix to make artifact names unique when running multiple instances'
         required: false
         type: string
+      pr_number:
+        description: 'Pull request number for creating comments (required when called via workflow_call)'
+        required: false
+        type: number
 
 permissions:
   contents: write
@@ -970,6 +974,7 @@ jobs:
         echo "Pull request context:"
         echo "  PR number: ${{ github.event.pull_request.number || 'N/A' }}"
         echo "  Issue number: ${{ github.event.issue.number || 'N/A' }}"
+        echo "  Input PR number: ${{ inputs.pr_number || 'N/A' }}"
         echo ""
         echo "Workflow context:"
         echo "  Workflow name: ${{ github.workflow }}"
@@ -979,11 +984,14 @@ jobs:
         echo "Expected behavior:"
         if [ "${{ github.event_name }}" = "pull_request" ]; then
           echo "  ✅ Running in pull_request context - PR comments should work"
+        elif [ "${{ inputs.pr_number }}" != "" ]; then
+          echo "  ✅ PR number provided via input - PR comments should work"
         elif [ "${{ github.event.pull_request.number }}" != "" ]; then
           echo "  ✅ PR number available - PR comments should work"
         else
-          echo "  ⚠️  Not in pull_request context - PR comments will be logged to console instead"
+          echo "  ⚠️  Not in pull_request context and no PR number provided - PR comments will be logged to console instead"
           echo "     This is normal for push events, workflow_dispatch, or scheduled runs"
+          echo "     For workflow_call, pass pr_number input parameter to enable PR comments"
         fi
         echo "=========================================="
 
@@ -1040,8 +1048,16 @@ jobs:
           let issueNumber = null;
           let canComment = false;
           
+          // Check if PR number was passed as input (for workflow_call context)
+          const inputPrNumber = '${{ inputs.pr_number }}';
+          console.log(`Input PR number: ${inputPrNumber}`);
+          
           // Try multiple ways to get the issue/PR number
-          if (context.issue?.number) {
+          if (inputPrNumber && inputPrNumber !== '') {
+            issueNumber = parseInt(inputPrNumber);
+            canComment = true;
+            console.log(`Found issue number from input parameter: ${issueNumber}`);
+          } else if (context.issue?.number) {
             issueNumber = context.issue.number;
             canComment = true;
             console.log(`Found issue number from context.issue: ${issueNumber}`);
@@ -1056,6 +1072,7 @@ jobs:
           } else {
             console.log('❌ No issue/PR number found - cannot create comment');
             console.log('This is likely because the workflow was not triggered by a pull request');
+            console.log('and no pr_number input was provided for workflow_call context');
             console.log('Event type:', context.eventName);
             canComment = false;
           }
@@ -1121,7 +1138,8 @@ jobs:
             console.log('');
             console.log('💡 To see visual diff results as PR comments:');
             console.log('   - Ensure this workflow is triggered by a pull_request event');
-            console.log('   - Or call this workflow from a workflow that has pull request context');
+            console.log('   - Or when calling via workflow_call, pass pr_number input parameter');
+            console.log('   - Example: pr_number: ${{ github.event.pull_request.number }}');
             console.log('');
             console.log('📦 Visual test results are still available as workflow artifacts');
             console.log('   Download link: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}');
