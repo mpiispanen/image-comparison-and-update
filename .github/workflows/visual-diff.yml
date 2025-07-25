@@ -729,6 +729,11 @@ jobs:
         if [ -f comparison_report.md ]; then
           BRANCH_NAME="${{ steps.commit_images.outputs.branch_name }}"
           
+          echo "=== Debug: Replacement Path Decision ==="
+          echo "images_committed value: '${{ steps.commit_images.outputs.images_committed }}'"
+          echo "branch_name value: '${{ steps.commit_images.outputs.branch_name }}'"
+          echo "=================================="
+          
           if [ "${{ steps.commit_images.outputs.images_committed }}" = "true" ]; then
             # Update the comparison report with embedded GitHub raw URLs
             REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
@@ -746,6 +751,10 @@ jobs:
               golden_file="golden/$filename"
               
               echo "=== Processing image embedding for: $filename ==="
+              
+              # Debug: Check what placeholders exist for this filename
+              echo "Checking for placeholders for $filename:"
+              grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
               
               # Define image URLs
               golden_url="$REPO_URL/golden/$filename"
@@ -821,6 +830,11 @@ jobs:
             echo "Reason: steps.commit_images.outputs.images_committed = '${{ steps.commit_images.outputs.images_committed }}'"
             
             # Enhanced fallback: Replace placeholders with artifact download links and file info
+            echo "=== Debug: Fallback Replacement Processing ==="
+            echo "Before fallback replacement:"
+            grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
+            echo "=============================================="
+            
             for output_file in $OUTPUTS_DIR/*.png; do
               if [ ! -f "$output_file" ]; then
                 continue
@@ -831,17 +845,22 @@ jobs:
               
               echo "Processing fallback for $filename..."
               
+              # Debug: Check what placeholders exist for this filename in fallback
+              echo "Checking for placeholders for $filename in fallback:"
+              grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
+              
               # Create artifact download URLs
               ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
               
               # Replace placeholders with download information and file details
               if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
                 # Add golden image info with download link
-                golden_info="**📁 Golden Master:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)"
+                golden_info="**📁 Golden Master:** [\\\`$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)"
                 if [ -f "$golden_file" ]; then
                   file_size=$(stat -c%s "$golden_file" 2>/dev/null || echo 'Unknown')
                   golden_info="$golden_info<br/>**Size:** ${file_size} bytes"
                 fi
+                echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with download info"
                 sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|$golden_info|g" comparison_report.md
               fi
               
@@ -849,20 +868,29 @@ jobs:
               if [ -f "$output_file" ]; then
                 file_size=$(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown')
                 dimensions=$(python3 -c "from PIL import Image; img = Image.open('$output_file'); print(f'{img.width}x{img.height}')" 2>/dev/null || echo 'Unknown')
-                output_info="**📁 New Output:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes, **Dimensions:** $dimensions"
+                output_info="**📁 New Output:** [\\\`$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes, **Dimensions:** $dimensions"
+                echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with download info"
                 sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|$output_info|g" comparison_report.md
               fi
               
               # Replace diff image placeholder if it exists
               if [ -f "diffs/diff_$filename" ]; then
                 file_size=$(stat -c%s "diffs/diff_$filename" 2>/dev/null || echo 'Unknown')
-                diff_info="**📁 Visual Difference:** [\`diff_$filename\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes"
+                diff_info="**📁 Visual Difference:** [\\\`diff_$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes"
+                echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with download info"
                 sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|$diff_info|g" comparison_report.md
               else
                 # Remove diff placeholder if no diff was generated
+                echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
                 sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
               fi
             done
+            
+            echo "=== Debug: After Fallback Replacement ==="
+            echo "After fallback replacement:"
+            grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
+            echo "========================================"
+            
             sed -i 's|IMAGE_EMBEDDING_PLACEHOLDER|## 🖼️ Image Files Available for Download\n\nImages could not be embedded directly in this PR comment. This can happen due to GitHub API limitations or temporary branch creation issues.\n\n📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**\n\n### Artifact Contents:\n- **`'$OUTPUTS_DIR'/`** - New test images generated by your application\n- **`diffs/`** - Visual difference images highlighting changes\n- **`golden/`** - Golden master reference images\n- **`comparison_report.md`** - This detailed report\n\n> **💡 Tip:** Extract the artifact ZIP file and open the images in your preferred image viewer to review the visual changes.|' comparison_report.md
           fi
         else
