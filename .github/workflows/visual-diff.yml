@@ -774,54 +774,97 @@ jobs:
             echo "Branch name: $BRANCH_NAME"
             
             # Process each output image to replace placeholders with actual image URLs
-            for output_file in $OUTPUTS_DIR/*.png; do
-              if [ ! -f "$output_file" ]; then
-                continue
-              fi
+            image_files_found=false
+            
+            # First approach: Process files from outputs directory
+            echo "=== Processing files from outputs directory ==="
+            if [ -d "$OUTPUTS_DIR" ] && [ -n "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
+              for output_file in "$OUTPUTS_DIR"/*.png; do
+                if [ -f "$output_file" ]; then
+                  image_files_found=true
+                  filename=$(basename "$output_file")
+                  golden_file="golden/$filename"
+                  
+                  echo "=== Processing image embedding for: $filename ==="
+                  
+                  # Debug: Check what placeholders exist for this filename
+                  echo "Checking for placeholders for $filename:"
+                  grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
+                  
+                  # Define image URLs
+                  golden_url="$REPO_URL/golden/$filename"
+                  output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
+                  diff_url="$REPO_URL/diffs/diff_$filename"
+                  
+                  # Debug: Show placeholder count before replacement
+                  echo "Before replacement:"
+                  grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
+                  
+                  # Replace placeholders with actual image markdown
+                  # For golden images (if they exist)
+                  if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
+                    sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|![Golden Master]($golden_url)|g" comparison_report.md
+                  fi
+                  
+                  # For new/output images (always exists)
+                  echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
+                  sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|![New Output]($output_url)|g" comparison_report.md
+                  
+                  # For diff images (only if it was generated)
+                  if [ -f "diffs/diff_$filename" ]; then
+                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
+                    sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|![Visual Difference]($diff_url)|g" comparison_report.md
+                  else
+                    # Remove diff placeholder if no diff was generated
+                    echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
+                    sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
+                  fi
+                  
+                  # Debug: Show placeholder count after replacement
+                  echo "After replacement:"
+                  grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
+                fi
+              done
+            fi
+            
+            # Second approach: If no files found in outputs dir, extract from placeholders
+            if [ "$image_files_found" = "false" ]; then
+              echo "=== No files found in outputs directory, processing placeholders directly ==="
               
-              filename=$(basename "$output_file")
-              golden_file="golden/$filename"
+              # Extract all unique filenames from placeholders in the report
+              placeholder_files=$(grep -o ".*_IMAGE_PLACEHOLDER_[^[:space:]]*" comparison_report.md | sed 's/.*_IMAGE_PLACEHOLDER_//' | sort -u)
               
-              echo "=== Processing image embedding for: $filename ==="
-              
-              # Debug: Check what placeholders exist for this filename
-              echo "Checking for placeholders for $filename:"
-              grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
-              
-              # Define image URLs
-              golden_url="$REPO_URL/golden/$filename"
-              output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
-              diff_url="$REPO_URL/diffs/diff_$filename"
-              
-              # Debug: Show placeholder count before replacement
-              echo "Before replacement:"
-              grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
-              
-              # Replace placeholders with actual image markdown
-              # For golden images (if they exist)
-              if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
-                sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|![Golden Master]($golden_url)|g" comparison_report.md
-              fi
-              
-              # For new/output images (always exists)
-              echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
-              sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|![New Output]($output_url)|g" comparison_report.md
-              
-              # For diff images (only if it was generated)
-              if [ -f "diffs/diff_$filename" ]; then
-                echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
-                sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|![Visual Difference]($diff_url)|g" comparison_report.md
+              if [ -n "$placeholder_files" ]; then
+                echo "Found placeholder files: $placeholder_files"
+                for filename in $placeholder_files; do
+                  echo "=== Processing image embedding for placeholder: $filename ==="
+                  
+                  # Define image URLs
+                  golden_url="$REPO_URL/golden/$filename"
+                  output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
+                  diff_url="$REPO_URL/diffs/diff_$filename"
+                  
+                  # Replace placeholders with actual image markdown
+                  if grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
+                    sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|![Golden Master]($golden_url)|g" comparison_report.md
+                  fi
+                  
+                  if grep -q "NEW_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
+                    sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|![New Output]($output_url)|g" comparison_report.md
+                  fi
+                  
+                  if grep -q "DIFF_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
+                    sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|![Visual Difference]($diff_url)|g" comparison_report.md
+                  fi
+                done
               else
-                # Remove diff placeholder if no diff was generated
-                echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
-                sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
+                echo "No placeholders found in report"
               fi
-              
-              # Debug: Show placeholder count after replacement
-              echo "After replacement:"
-              grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
-            done
+            fi
             
             # Add acceptance commands section and download backup as footnote
             echo "" >> comparison_report.md
@@ -865,58 +908,108 @@ jobs:
             echo "=== Debug: Fallback Replacement Processing ==="
             echo "Before fallback replacement:"
             grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
+            echo "Current directory: $(pwd)"
+            echo "OUTPUTS_DIR: $OUTPUTS_DIR"
+            echo "Files in OUTPUTS_DIR:"
+            ls -la "$OUTPUTS_DIR"/ 2>/dev/null || echo "OUTPUTS_DIR not found"
             echo "=============================================="
             
-            for output_file in $OUTPUTS_DIR/*.png; do
-              if [ ! -f "$output_file" ]; then
-                continue
-              fi
-              
-              filename=$(basename "$output_file")
-              golden_file="golden/$filename"
-              
-              echo "Processing fallback for $filename..."
-              
-              # Debug: Check what placeholders exist for this filename in fallback
-              echo "Checking for placeholders for $filename in fallback:"
-              grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
-              
-              # Create artifact download URLs
-              ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              
-              # Replace placeholders with download information and file details
-              if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                # Add golden image info with download link
-                golden_info="**📁 Golden Master:** [\\\`$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)"
-                if [ -f "$golden_file" ]; then
-                  file_size=$(stat -c%s "$golden_file" 2>/dev/null || echo 'Unknown')
-                  golden_info="$golden_info<br/>**Size:** ${file_size} bytes"
+            # Create artifact download URLs
+            ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            
+            # Find all image files that might have placeholders and process them
+            # Check both the outputs directory and any placeholders in the report
+            image_files_found=false
+            
+            # First, try to process files from the outputs directory
+            if [ -d "$OUTPUTS_DIR" ] && [ -n "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
+              echo "Processing images from outputs directory..."
+              for output_file in "$OUTPUTS_DIR"/*.png; do
+                if [ -f "$output_file" ]; then
+                  image_files_found=true
+                  filename=$(basename "$output_file")
+                  golden_file="golden/$filename"
+                  
+                  echo "Processing fallback for $filename..."
+                  
+                  # Debug: Check what placeholders exist for this filename in fallback
+                  echo "Checking for placeholders for $filename in fallback:"
+                  grep -n ".*_IMAGE_PLACEHOLDER_${filename}" comparison_report.md || echo "No placeholders found for $filename"
+                  
+                  # Replace placeholders with download information and file details
+                  if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    # Add golden image info with download link (fix escaping)
+                    golden_info="**📁 Golden Master:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)"
+                    if [ -f "$golden_file" ]; then
+                      file_size=$(stat -c%s "$golden_file" 2>/dev/null || echo 'Unknown')
+                      golden_info="$golden_info<br/>**Size:** ${file_size} bytes"
+                    fi
+                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with download info"
+                    # Use double quotes and escape properly
+                    sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|${golden_info}|g" comparison_report.md
+                  fi
+                  
+                  # Replace new image placeholder with download info
+                  if [ -f "$output_file" ]; then
+                    file_size=$(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown')
+                    dimensions=$(python3 -c "from PIL import Image; img = Image.open('$output_file'); print(f'{img.width}x{img.height}')" 2>/dev/null || echo 'Unknown')
+                    output_info="**📁 New Output:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes, **Dimensions:** $dimensions"
+                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with download info"
+                    sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|${output_info}|g" comparison_report.md
+                  fi
+                  
+                  # Replace diff image placeholder if it exists
+                  if [ -f "diffs/diff_$filename" ]; then
+                    file_size=$(stat -c%s "diffs/diff_$filename" 2>/dev/null || echo 'Unknown')
+                    diff_info="**📁 Visual Difference:** [\`diff_$filename\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes"
+                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with download info"
+                    sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|${diff_info}|g" comparison_report.md
+                  else
+                    # Remove diff placeholder if no diff was generated
+                    echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
+                    sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
+                  fi
                 fi
-                echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with download info"
-                sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|$golden_info|g" comparison_report.md
-              fi
+              done
+            fi
+            
+            # If no files were found in outputs directory, try to extract filenames from placeholders
+            if [ "$image_files_found" = "false" ]; then
+              echo "No files found in outputs directory, extracting filenames from placeholders..."
               
-              # Replace new image placeholder with download info
-              if [ -f "$output_file" ]; then
-                file_size=$(stat -c%s "$output_file" 2>/dev/null || echo 'Unknown')
-                dimensions=$(python3 -c "from PIL import Image; img = Image.open('$output_file'); print(f'{img.width}x{img.height}')" 2>/dev/null || echo 'Unknown')
-                output_info="**📁 New Output:** [\\\`$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes, **Dimensions:** $dimensions"
-                echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with download info"
-                sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|$output_info|g" comparison_report.md
-              fi
+              # Extract all unique filenames from placeholders in the report
+              placeholder_files=$(grep -o ".*_IMAGE_PLACEHOLDER_[^[:space:]]*" comparison_report.md | sed 's/.*_IMAGE_PLACEHOLDER_//' | sort -u)
               
-              # Replace diff image placeholder if it exists
-              if [ -f "diffs/diff_$filename" ]; then
-                file_size=$(stat -c%s "diffs/diff_$filename" 2>/dev/null || echo 'Unknown')
-                diff_info="**📁 Visual Difference:** [\\\`diff_$filename\\\`]($ARTIFACT_URL) (Download artifacts to view)<br/>**Size:** ${file_size} bytes"
-                echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with download info"
-                sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|$diff_info|g" comparison_report.md
+              if [ -n "$placeholder_files" ]; then
+                echo "Found placeholder files: $placeholder_files"
+                for filename in $placeholder_files; do
+                  echo "Processing placeholder-based fallback for $filename..."
+                  
+                  # Replace all placeholders for this filename with download links
+                  golden_info="**📁 Golden Master:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)"
+                  output_info="**📁 New Output:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)"
+                  diff_info="**📁 Visual Difference:** [\`diff_$filename\`]($ARTIFACT_URL) (Download artifacts to view)"
+                  
+                  # Replace placeholders
+                  if grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename}"
+                    sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|${golden_info}|g" comparison_report.md
+                  fi
+                  
+                  if grep -q "NEW_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename}"
+                    sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|${output_info}|g" comparison_report.md
+                  fi
+                  
+                  if grep -q "DIFF_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
+                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename}"
+                    sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|${diff_info}|g" comparison_report.md
+                  fi
+                done
               else
-                # Remove diff placeholder if no diff was generated
-                echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
-                sed -i "/DIFF_IMAGE_PLACEHOLDER_${filename}/d" comparison_report.md
+                echo "No placeholders found in report to process"
               fi
-            done
+            fi
             
             echo "=== Debug: After Fallback Replacement ==="
             echo "After fallback replacement:"
@@ -957,7 +1050,72 @@ jobs:
         fi
         echo "=================================="
     
-    - name: Debug GitHub context and workflow execution
+    - name: Final placeholder verification and cleanup
+      if: always()
+      run: |
+        set -euo pipefail
+        
+        echo "=== Final Placeholder Verification ==="
+        
+        if [ -f comparison_report.md ]; then
+          echo "Report exists, checking for remaining placeholders..."
+          
+          # Count remaining placeholders
+          remaining_placeholders=$(grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0")
+          echo "Remaining placeholders: $remaining_placeholders"
+          
+          if [ "$remaining_placeholders" -gt 0 ]; then
+            echo "❌ Found unreplaced placeholders:"
+            grep -n ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "None found"
+            
+            echo ""
+            echo "=== Emergency placeholder cleanup ==="
+            echo "Forcibly replacing any remaining placeholders with download links..."
+            
+            # Extract all remaining placeholder filenames and replace them
+            ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            
+            # Get unique filenames from any remaining placeholders
+            remaining_files=$(grep -o ".*_IMAGE_PLACEHOLDER_[^[:space:]]*" comparison_report.md 2>/dev/null | sed 's/.*_IMAGE_PLACEHOLDER_//' | sort -u || echo "")
+            
+            if [ -n "$remaining_files" ]; then
+              for filename in $remaining_files; do
+                echo "Emergency cleanup for: $filename"
+                
+                # Replace any remaining placeholders with simple download links
+                sed -i "s|GOLDEN_IMAGE_PLACEHOLDER_${filename}|**📁 Golden Master:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)|g" comparison_report.md
+                sed -i "s|NEW_IMAGE_PLACEHOLDER_${filename}|**📁 New Output:** [\`$filename\`]($ARTIFACT_URL) (Download artifacts to view)|g" comparison_report.md
+                sed -i "s|DIFF_IMAGE_PLACEHOLDER_${filename}|**📁 Visual Difference:** [\`diff_$filename\`]($ARTIFACT_URL) (Download artifacts to view)|g" comparison_report.md
+              done
+              
+              # Final check
+              final_remaining=$(grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0")
+              echo "After emergency cleanup - remaining placeholders: $final_remaining"
+            fi
+          else
+            echo "✅ No unreplaced placeholders found"
+          fi
+          
+          # Check for embedded images
+          embedded_images=$(grep -c "!\[.*\](" comparison_report.md || echo "0")
+          echo "Embedded images found: $embedded_images"
+          
+          if [ "$embedded_images" -gt 0 ]; then
+            echo "✅ Found embedded images:"
+            grep "!\[.*\](" comparison_report.md | head -3
+          fi
+          
+          echo ""
+          echo "=== Final Report Statistics ==="
+          echo "Report length: $(wc -l < comparison_report.md) lines"
+          echo "Report size: $(wc -c < comparison_report.md) bytes"
+          echo "Embedded images: $embedded_images"
+          echo "Remaining placeholders: $(grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0")"
+          
+        else
+          echo "❌ No comparison report found!"
+        fi
+    
       if: always()
       run: |
         echo "=== Debug: GitHub Context Information ==="
