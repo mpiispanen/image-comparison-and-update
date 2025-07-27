@@ -90,7 +90,30 @@ jobs:
 
 **Purpose**: This workflow tests the visual diff system itself to ensure it's working correctly. It runs automatically to catch any regressions in the visual diff functionality.
 
-### 3. Accept New Golden Image
+### 3. Post-Commit Visual Regression
+
+**Trigger**: Automatically on push to main/develop branches when images are present, or manually via workflow dispatch
+
+**Process**:
+1. Checks for test images in the `outputs/` directory
+2. If images are found, automatically runs visual regression testing
+3. Uses the main visual-diff workflow to perform comparisons
+4. Provides detailed logging and summary of results
+5. Skips gracefully when no images are present (normal for code-only commits)
+
+**Features**:
+- **Automatic Detection**: Only runs when visual changes are present
+- **Smart Skipping**: Skips execution for commits without visual outputs
+- **Force Run**: Manual option to run even without images (generates test images)
+- **Continuous Monitoring**: Provides ongoing visual regression monitoring for main branches
+- **Detailed Logging**: Comprehensive reporting of post-commit visual validation
+
+**Usage**:
+- **Automatic**: Runs automatically when you push commits containing images to `outputs/`
+- **Manual**: Go to Actions → Post-Commit Visual Regression → Run workflow
+- **Force Mode**: Enable "force_run" to test the system even without existing images
+
+### 4. Accept New Golden Image
 
 **Trigger**: Comment `/accept-image <filename>` on PR
 
@@ -98,6 +121,8 @@ jobs:
 1. Validates commenter has write permissions
 2. Downloads artifacts from visual diff workflow
 3. Moves accepted image to `golden/` directory
+4. Commits and pushes using Git LFS
+5. Confirms acceptance via PR comment
 4. Commits and pushes using Git LFS
 5. Confirms acceptance via PR comment
 
@@ -175,7 +200,7 @@ def run_your_tests():
 # In your external repository's .github/workflows/ci.yml
 name: CI with Visual Testing
 
-on: [pull_request]
+on: [pull_request, push]
 
 jobs:
   build-and-test:
@@ -190,16 +215,31 @@ jobs:
           mkdir -p outputs
           your-app screenshot --output outputs/
           
-  visual-regression:
+  # For Pull Requests: Run visual regression and comment on PR
+  visual-regression-pr:
     needs: build-and-test
+    if: github.event_name == 'pull_request'
     uses: mpiispanen/image-comparison-and-update/.github/workflows/visual-diff.yml@main
     with:
       outputs_directory: outputs
+      pr_number: ${{ github.event.pull_request.number }}
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+  # For Push to main: Run post-commit visual regression monitoring
+  visual-regression-post-commit:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: mpiispanen/image-comparison-and-update/.github/workflows/post_commit_visual_regression.yml@main
     permissions:
       contents: write
       issues: write
       pull-requests: write
 ```
+
+**Post-Commit Monitoring**: The post-commit workflow provides continuous monitoring of visual changes on your main branch. It automatically detects when commits contain visual outputs and runs regression testing, helping catch visual issues that may have been missed during PR review.
 
 ### Comment Behavior
 
