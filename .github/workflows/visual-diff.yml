@@ -1115,9 +1115,8 @@ jobs:
         else
           echo "❌ No comparison report found!"
         fi
-    
-      if: always()
-      run: |
+        
+        echo ""
         echo "=== Debug: GitHub Context Information ==="
         echo "Event name: ${{ github.event_name }}"
         echo "Repository: ${{ github.repository }}"
@@ -1137,7 +1136,7 @@ jobs:
         echo "Workflow context:"
         echo "  Workflow name: ${{ github.workflow }}"
         echo "  Job name: ${{ github.job }}"
-        echo "  Step name: Debug GitHub context and workflow execution"
+        echo "  Step name: Final placeholder verification and cleanup"
         echo ""
         echo "Expected behavior:"
         if [ "${{ github.event_name }}" = "pull_request" ]; then
