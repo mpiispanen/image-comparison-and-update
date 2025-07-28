@@ -1246,42 +1246,42 @@ jobs:
           
           if (compareStepResult === 'failure') {
             // Compare step failed - create error report
-            report = '## ❌ Visual Regression Test Failed\\n\\n' +
-                     '**Error:** The visual comparison process encountered an error and could not complete.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                     '### Troubleshooting Steps:\\n' +
-                     '1. Check that test images were generated properly in the outputs directory\\n' +
-                     '2. Verify that NVIDIA FLIP is installed correctly\\n' +
-                     '3. Check the workflow logs for specific error messages\\n' +
-                     '4. Ensure golden master images exist and are accessible\\n\\n' +
-                     '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\\n\\n' +
+            report = '## ❌ Visual Regression Test Failed\n\n' +
+                     '**Error:** The visual comparison process encountered an error and could not complete.\n\n' +
+                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                     '### Troubleshooting Steps:\n' +
+                     '1. Check that test images were generated properly in the outputs directory\n' +
+                     '2. Verify that NVIDIA FLIP is installed correctly\n' +
+                     '3. Check the workflow logs for specific error messages\n' +
+                     '4. Ensure golden master images exist and are accessible\n\n' +
+                     '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\n\n' +
                      '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
           } else if (changesDetected === 'true') {
             // Changes detected - use full comparison report
             try {
               report = fs.readFileSync('comparison_report.md', 'utf8');
             } catch (error) {
-              report = '## ❌ Visual Regression Test Results\\n\\n' +
-                       '**Error:** Comparison completed but report file could not be read.\\n\\n' +
-                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                       '**Error Details:** ' + error.message + '\\n\\n' +
+              report = '## ❌ Visual Regression Test Results\n\n' +
+                       '**Error:** Comparison completed but report file could not be read.\n\n' +
+                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                       '**Error Details:** ' + error.message + '\n\n' +
                        '📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
             }
           } else if (changesDetected === 'false') {
             // No changes detected - create success report
-            report = '✅ **Visual tests passed!** No differences detected.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
+            report = '✅ **Visual tests passed!** No differences detected.\n\n' +
+                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
                      'All generated images match their golden master references within acceptable tolerance.';
           } else {
             // Unexpected state - create diagnostic report
-            report = '## ⚠️ Visual Regression Test Status Unknown\\n\\n' +
-                     '**Warning:** The visual comparison process completed but the results are unclear.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                     '**Debug Information:**\\n' +
-                     '- Compare step outcome: ' + compareStepResult + '\\n' +
-                     '- Changes detected value: "' + changesDetected + '"\\n' +
-                     '- Images committed: ' + imagesCommitted + '\\n\\n' +
-                     '**Action Required:** Please check the workflow logs to determine what happened.\\n\\n' +
+            report = '## ⚠️ Visual Regression Test Status Unknown\n\n' +
+                     '**Warning:** The visual comparison process completed but the results are unclear.\n\n' +
+                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                     '**Debug Information:**\n' +
+                     '- Compare step outcome: ' + compareStepResult + '\n' +
+                     '- Changes detected value: "' + changesDetected + '"\n' +
+                     '- Images committed: ' + imagesCommitted + '\n\n' +
+                     '**Action Required:** Please check the workflow logs to determine what happened.\n\n' +
                      '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
           }
           
