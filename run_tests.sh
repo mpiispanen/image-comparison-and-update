@@ -123,7 +123,8 @@ import sys
 workflow_files = [
     '.github/workflows/visual-diff.yml',
     '.github/workflows/test-visual-diff.yml', 
-    '.github/workflows/accept-image.yml'
+    '.github/workflows/accept-image.yml',
+    '.github/workflows/post_commit_visual_regression.yml'
 ]
 
 for workflow_file in workflow_files:
