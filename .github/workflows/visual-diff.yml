@@ -866,13 +866,12 @@ jobs:
               fi
             fi
             
-            # Add acceptance commands section and download backup as footnote
-            echo "" >> comparison_report.md
-            echo "## 🔧 Accept New Images" >> comparison_report.md
-            echo "" >> comparison_report.md
-            
+            # Add acceptance commands section only if there are changed images
             CHANGED_IMAGES="${{ steps.compare.outputs.changed_images }}"
             if [ -n "$CHANGED_IMAGES" ] && [ "$CHANGED_IMAGES" != " " ]; then
+              echo "" >> comparison_report.md
+              echo "## 🔧 Accept New Images" >> comparison_report.md
+              echo "" >> comparison_report.md
               echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "\`\`\`" >> comparison_report.md
@@ -882,8 +881,6 @@ jobs:
               echo "\`\`\`" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> comparison_report.md
-            else
-              echo "No changed images require acceptance." >> comparison_report.md
             fi
             
             echo "" >> comparison_report.md
