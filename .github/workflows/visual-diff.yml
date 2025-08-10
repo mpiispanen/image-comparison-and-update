@@ -226,7 +226,37 @@ jobs:
       id: compare
       continue-on-error: true
       run: |
-        set -euo pipefail  # Enable strict error handling
+        # Create error reporting helper function
+        create_error_report() {
+          local error_title="$1"
+          local error_description="$2"
+          local troubleshooting_steps="$3"
+          
+          # Create a complete, clean error report
+          echo "# ❌ Visual Regression Test Failed" > comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Error:** $error_description" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "## Error Details" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "$error_title" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "### Troubleshooting Steps:" >> comparison_report.md
+          echo -e "$troubleshooting_steps" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Action Required:** Please review the error details above and fix any underlying issues before retrying." >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> comparison_report.md
+          
+          # Ensure the file is fully written
+          sync
+          echo "✅ Complete error report created: comparison_report.md"
+        }
+        
+        # Disable strict error handling initially to control error flow
+        set -uo pipefail
         
         # Use configurable outputs directory
         OUTPUTS_DIR="${{ steps.check_images.outputs.outputs_dir }}"
@@ -234,6 +264,58 @@ jobs:
         # Initialize variables
         CHANGED_IMAGES=""
         CHANGES_DETECTED=false
+        
+        echo "=== Starting visual regression comparison ==="
+        echo "Output directory: $OUTPUTS_DIR"
+        
+        # Ensure FLIP is available
+        if ! command -v flip &> /dev/null; then
+          echo "❌ FLIP command not found. Installing FLIP..."
+          if ! pip install flip-evaluator; then
+            echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
+            echo "changes_detected=error" >> $GITHUB_OUTPUT
+            echo "changed_images=" >> $GITHUB_OUTPUT
+            
+            create_error_report "FLIP Installation Failed" \
+              "FLIP tool installation failed. Cannot proceed with image comparison." \
+              "1. Check that the system has Python and pip available\n2. Verify network connectivity for package installation\n3. Check for any dependency conflicts\n4. Ensure pip has sufficient permissions to install packages"
+            
+            exit 1
+          fi
+          echo "✅ FLIP installed successfully"
+        fi
+        
+        # Verify outputs directory exists and has images
+        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
+          echo "❌ No output images found in $OUTPUTS_DIR/ directory"
+          echo "changes_detected=error" >> $GITHUB_OUTPUT
+          echo "changed_images=" >> $GITHUB_OUTPUT
+          
+          create_error_report "No Output Images Found" \
+            "No output images found in $OUTPUTS_DIR/ directory." \
+            "1. Verify that your application generates images in the $OUTPUTS_DIR/ directory\n2. Check that the outputs_directory parameter is set correctly\n3. Ensure that test images are committed to the repository\n4. For workflow_call, verify that artifacts are uploaded correctly\n5. Check the workflow logs to see if image generation failed"
+          
+          exit 1
+        fi
+        
+        echo "✅ Found images in $OUTPUTS_DIR/, proceeding with comparison"
+        
+        # Set up error trap to ensure clean error reporting
+        trap 'handle_unexpected_exit $?' EXIT
+        handle_unexpected_exit() {
+          local exit_code=$1
+          if [ $exit_code -ne 0 ] && [ ! -f comparison_report.md ]; then
+            echo "⚠️ Unexpected exit detected, creating emergency error report"
+            create_error_report "Unexpected Script Exit" \
+              "The comparison script exited unexpectedly with code $exit_code." \
+              "1. Check the workflow logs for specific error messages\n2. Verify all required dependencies are available\n3. Ensure sufficient disk space and memory\n4. Check for file permission issues\n5. Retry the workflow"
+            echo "changes_detected=error" >> $GITHUB_OUTPUT 2>/dev/null || true
+            echo "changed_images=" >> $GITHUB_OUTPUT 2>/dev/null || true
+          fi
+        }
+        
+        # Re-enable strict error handling for the main processing
+        set -euo pipefail
         
         # Create comparison report with summary table
         echo "# Visual Regression Test Results" > comparison_report.md
@@ -252,56 +334,6 @@ jobs:
         echo "" > detailed_results.md
         echo "## Detailed Results" >> detailed_results.md
         echo "" >> detailed_results.md
-        
-        # Ensure FLIP is available
-        if ! command -v flip &> /dev/null; then
-          echo "❌ FLIP command not found. Installing FLIP..."
-          pip install flip-evaluator || {
-            echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
-            echo "changes_detected=error" >> $GITHUB_OUTPUT
-            echo "changed_images=" >> $GITHUB_OUTPUT
-            
-            # Create a proper error report before exiting
-            echo "## ❌ Visual Regression Test Failed" >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "**Error:** FLIP tool installation failed. Cannot proceed with image comparison." >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "### Troubleshooting Steps:" >> comparison_report.md
-            echo "1. Check that the system has Python and pip available" >> comparison_report.md
-            echo "2. Verify network connectivity for package installation" >> comparison_report.md
-            echo "3. Check for any dependency conflicts" >> comparison_report.md
-            echo "" >> comparison_report.md
-            echo "**Action Required:** Fix the FLIP installation issue and retry the workflow." >> comparison_report.md
-            
-            exit 1
-          }
-        fi
-        
-        # Verify outputs directory exists and has images
-        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
-          echo "❌ No output images found in $OUTPUTS_DIR/ directory"
-          echo "changes_detected=error" >> $GITHUB_OUTPUT
-          echo "changed_images=" >> $GITHUB_OUTPUT
-          
-          # Create a proper error report before exiting
-          echo "## ❌ Visual Regression Test Failed" >> comparison_report.md
-          echo "" >> comparison_report.md
-          echo "**Error:** No output images found in $OUTPUTS_DIR/ directory." >> comparison_report.md
-          echo "" >> comparison_report.md
-          echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
-          echo "" >> comparison_report.md
-          echo "### Troubleshooting Steps:" >> comparison_report.md
-          echo "1. Verify that your application generates images in the $OUTPUTS_DIR/ directory" >> comparison_report.md
-          echo "2. Check that the outputs_directory parameter is set correctly" >> comparison_report.md
-          echo "3. Ensure that test images are committed to the repository" >> comparison_report.md
-          echo "4. For workflow_call, verify that artifacts are uploaded correctly" >> comparison_report.md
-          echo "" >> comparison_report.md
-          echo "**Action Required:** Ensure test images exist before running visual regression testing." >> comparison_report.md
-          
-          exit 1
-        fi
         
         # Process each output image
         for output_file in "$OUTPUTS_DIR"/*.png; do
@@ -524,7 +556,31 @@ jobs:
           echo "✅ **All visual tests passed!** No differences detected." >> comparison_report.md
         fi
         
+        # Ensure all file writes are completed and synced to disk
+        sync
+        
+        # Clear the error trap since we completed successfully  
+        trap - EXIT
+        
+        # Verify that comparison_report.md was created and is readable
+        if [ ! -f comparison_report.md ]; then
+          echo "❌ ERROR: comparison_report.md was not created!"
+          echo "changes_detected=error" >> $GITHUB_OUTPUT
+          echo "changed_images=" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        # Double-check the file is readable and not empty
+        if [ ! -s comparison_report.md ]; then
+          echo "❌ ERROR: comparison_report.md is empty!"
+          echo "changes_detected=error" >> $GITHUB_OUTPUT
+          echo "changed_images=" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
         echo "✅ Comparison step completed successfully"
+        echo "📄 Report file size: $(wc -c < comparison_report.md) bytes"
+        echo "📝 Report line count: $(wc -l < comparison_report.md) lines"
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
