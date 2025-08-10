@@ -253,6 +253,10 @@ jobs:
           # Ensure the file is fully written
           sync
           echo "✅ Complete error report created: comparison_report.md"
+          
+          # CRITICAL: Set error outputs immediately after creating error report
+          echo "changes_detected=error" >> $GITHUB_OUTPUT
+          echo "changed_images=" >> $GITHUB_OUTPUT
         }
         
         # Disable strict error handling initially to control error flow
@@ -261,7 +265,7 @@ jobs:
         # Use configurable outputs directory
         OUTPUTS_DIR="${{ steps.check_images.outputs.outputs_dir }}"
         
-        # Initialize variables
+        # Initialize variables (these will be set only at the very end if successful)
         CHANGED_IMAGES=""
         CHANGES_DETECTED=false
         
@@ -273,13 +277,9 @@ jobs:
           echo "❌ FLIP command not found. Installing FLIP..."
           if ! pip install flip-evaluator; then
             echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
-            echo "changes_detected=error" >> $GITHUB_OUTPUT
-            echo "changed_images=" >> $GITHUB_OUTPUT
-            
             create_error_report "FLIP Installation Failed" \
               "FLIP tool installation failed. Cannot proceed with image comparison." \
               "1. Check that the system has Python and pip available\n2. Verify network connectivity for package installation\n3. Check for any dependency conflicts\n4. Ensure pip has sufficient permissions to install packages"
-            
             exit 1
           fi
           echo "✅ FLIP installed successfully"
@@ -288,13 +288,9 @@ jobs:
         # Verify outputs directory exists and has images
         if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
           echo "❌ No output images found in $OUTPUTS_DIR/ directory"
-          echo "changes_detected=error" >> $GITHUB_OUTPUT
-          echo "changed_images=" >> $GITHUB_OUTPUT
-          
           create_error_report "No Output Images Found" \
             "No output images found in $OUTPUTS_DIR/ directory." \
             "1. Verify that your application generates images in the $OUTPUTS_DIR/ directory\n2. Check that the outputs_directory parameter is set correctly\n3. Ensure that test images are committed to the repository\n4. For workflow_call, verify that artifacts are uploaded correctly\n5. Check the workflow logs to see if image generation failed"
-          
           exit 1
         fi
         
@@ -309,8 +305,6 @@ jobs:
             create_error_report "Unexpected Script Exit" \
               "The comparison script exited unexpectedly with code $exit_code." \
               "1. Check the workflow logs for specific error messages\n2. Verify all required dependencies are available\n3. Ensure sufficient disk space and memory\n4. Check for file permission issues\n5. Retry the workflow"
-            echo "changes_detected=error" >> $GITHUB_OUTPUT 2>/dev/null || true
-            echo "changed_images=" >> $GITHUB_OUTPUT 2>/dev/null || true
           fi
         }
         
@@ -547,10 +541,6 @@ jobs:
         # Add image embedding placeholder for later replacement
         echo "IMAGE_EMBEDDING_PLACEHOLDER" >> comparison_report.md
         
-        # Set outputs for next steps
-        echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
-        echo "changed_images=$CHANGED_IMAGES" >> $GITHUB_OUTPUT
-        
         # If no changes, add a success message
         if [ "$CHANGES_DETECTED" = "false" ]; then
           echo "✅ **All visual tests passed!** No differences detected." >> comparison_report.md
@@ -559,28 +549,49 @@ jobs:
         # Ensure all file writes are completed and synced to disk
         sync
         
-        # Clear the error trap since we completed successfully  
-        trap - EXIT
-        
-        # Verify that comparison_report.md was created and is readable
+        # Verify that comparison_report.md was created and is readable BEFORE setting outputs
         if [ ! -f comparison_report.md ]; then
           echo "❌ ERROR: comparison_report.md was not created!"
-          echo "changes_detected=error" >> $GITHUB_OUTPUT
-          echo "changed_images=" >> $GITHUB_OUTPUT
+          create_error_report "Report File Creation Failed" \
+            "The comparison report file was not created successfully." \
+            "1. Check for disk space issues\n2. Verify file permissions\n3. Check for system errors in the logs\n4. Retry the workflow"
           exit 1
         fi
         
         # Double-check the file is readable and not empty
         if [ ! -s comparison_report.md ]; then
           echo "❌ ERROR: comparison_report.md is empty!"
-          echo "changes_detected=error" >> $GITHUB_OUTPUT
-          echo "changed_images=" >> $GITHUB_OUTPUT
+          create_error_report "Report File Empty" \
+            "The comparison report file was created but is empty." \
+            "1. Check for script errors during report generation\n2. Verify all comparison steps completed\n3. Check the workflow logs for specific error messages\n4. Retry the workflow"
           exit 1
         fi
+        
+        # Verify the report file is well-formed by checking it contains expected content
+        if ! grep -q "Visual Regression Test Results\|Visual Regression Test Failed" comparison_report.md; then
+          echo "❌ ERROR: comparison_report.md appears to be malformed!"
+          echo "File contents preview:"
+          head -10 comparison_report.md || echo "Could not read file"
+          create_error_report "Report File Malformed" \
+            "The comparison report file was created but appears to be malformed or incomplete." \
+            "1. Check for script errors during report generation\n2. Verify sufficient disk space and memory\n3. Check for interrupted file writes\n4. Review the workflow logs for specific error messages\n5. Retry the workflow"
+          exit 1
+        fi
+        
+        # CRITICAL: Only set outputs after everything is verified to be successful
+        # This prevents the race condition where outputs are set but report is incomplete
+        echo "✅ All verification checks passed, setting final outputs..."
+        echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
+        echo "changed_images=$CHANGED_IMAGES" >> $GITHUB_OUTPUT
+        
+        # Clear the error trap since we completed successfully  
+        trap - EXIT
         
         echo "✅ Comparison step completed successfully"
         echo "📄 Report file size: $(wc -c < comparison_report.md) bytes"
         echo "📝 Report line count: $(wc -l < comparison_report.md) lines"
+        echo "🔄 Changes detected: $CHANGES_DETECTED"
+        echo "📝 Changed images: $CHANGED_IMAGES"
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -1311,6 +1322,36 @@ jobs:
         fi
         echo "=================================="
 
+    - name: Wait for comparison step completion
+      if: always()
+      run: |
+        echo "=== Ensuring comparison step is fully complete ==="
+        echo "Compare step outcome: ${{ steps.compare.outcome }}"
+        echo "Changes detected: ${{ steps.compare.outputs.changes_detected }}"
+        
+        # Wait a moment to ensure all file operations are complete
+        echo "Waiting for file system synchronization..."
+        sleep 5
+        
+        # Verify the comparison step has finished writing all outputs
+        echo "Checking comparison step outputs and file state..."
+        if [ -f comparison_report.md ]; then
+          echo "✅ Report file exists"
+          echo "📄 Report file size: $(wc -c < comparison_report.md) bytes"
+          echo "📝 Report line count: $(wc -l < comparison_report.md) lines"
+          
+          # Check if file appears to be complete
+          if [ -s comparison_report.md ]; then
+            echo "✅ Report file is not empty"
+          else
+            echo "⚠️ Report file is empty - this may indicate an incomplete process"
+          fi
+        else
+          echo "⚠️ Report file does not exist - this may indicate comparison step failure"
+        fi
+        
+        echo "=== Synchronization check complete ==="
+
     - name: Comment PR with visual diff results
       if: always()
       uses: actions/github-script@v7
@@ -1370,18 +1411,30 @@ jobs:
           console.log(`Changes detected: ${changesDetected}`);
           console.log(`Images committed successfully: ${imagesCommitted}`);
           
+          // First, check if the comparison step actually succeeded
           if (compareStepResult === 'failure' || changesDetected === 'error') {
             // Compare step failed or encountered an error - try to read the report file first
             try {
-              report = fs.readFileSync('comparison_report.md', 'utf8');
-              console.log('Successfully read comparison report file with error details');
+              if (require('fs').existsSync('comparison_report.md')) {
+                const reportContent = fs.readFileSync('comparison_report.md', 'utf8');
+                // Verify the report contains actual content (not just a partial file)
+                if (reportContent.length > 100 && reportContent.includes('Visual Regression Test')) {
+                  report = reportContent;
+                  console.log('Successfully read complete comparison report file with error details');
+                } else {
+                  throw new Error('Report file exists but appears incomplete or corrupted');
+                }
+              } else {
+                throw new Error('Report file does not exist');
+              }
             } catch (error) {
-              console.log('Could not read comparison report file, generating fallback error report');
+              console.log(`Could not read comparison report file: ${error.message}`);
+              console.log('Generating fallback error report');
               // Fallback error report
               report = '## ❌ Visual Regression Test Failed\n\n' +
                        '**Error:** The visual comparison process encountered an error and could not complete.\n\n' +
                        '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
-                       '**Error Details:** ' + error.message + '\n\n' +
+                       `**Error Details:** ${error.message}\n\n` +
                        '### Troubleshooting Steps:\n' +
                        '1. Check that test images were generated properly in the outputs directory\n' +
                        '2. Verify that NVIDIA FLIP is installed correctly\n' +
@@ -1391,15 +1444,39 @@ jobs:
                        '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
             }
           } else if (changesDetected === 'true') {
-            // Changes detected - use full comparison report
+            // Changes detected - but verify the report file exists and is complete before trusting it
             try {
-              report = fs.readFileSync('comparison_report.md', 'utf8');
+              if (require('fs').existsSync('comparison_report.md')) {
+                const reportContent = fs.readFileSync('comparison_report.md', 'utf8');
+                // Verify the report contains actual content and isn't corrupted
+                if (reportContent.length > 100 && 
+                    (reportContent.includes('Visual Regression Test Results') || reportContent.includes('Visual Regression Test Failed'))) {
+                  report = reportContent;
+                  console.log('Successfully read complete comparison report file');
+                } else {
+                  throw new Error('Report file exists but appears incomplete or corrupted (length: ' + reportContent.length + ')');
+                }
+              } else {
+                throw new Error('Report file does not exist');
+              }
             } catch (error) {
-              report = '## ❌ Visual Regression Test Results\n\n' +
-                       '**Error:** Comparison completed but report file could not be read.\n\n' +
+              console.log(`Could not read valid comparison report file: ${error.message}`);
+              console.log('This indicates a synchronization issue - comparison step claimed success but report is invalid');
+              // This is the exact error the user is experiencing - create a specific error report
+              report = '## ❌ Visual Regression Test Synchronization Error\n\n' +
+                       '**Error:** The comparison step indicated changes were detected, but the report file could not be read or is incomplete.\n\n' +
                        '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
-                       '**Error Details:** ' + error.message + '\n\n' +
-                       '📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
+                       `**Technical Details:** ${error.message}\n\n` +
+                       '### This Indicates:\n' +
+                       '1. A race condition between the comparison and comment steps\n' +
+                       '2. The comparison step may have been interrupted after setting outputs\n' +
+                       '3. File system synchronization issues\n' +
+                       '4. Partial script execution due to timeouts or resource constraints\n\n' +
+                       '### Recommended Actions:\n' +
+                       '1. Re-run the workflow to see if the issue persists\n' +
+                       '2. Check the workflow logs for any timeout or resource warnings\n' +
+                       '3. Report this as a workflow issue if it continues to occur\n\n' +
+                       '📦 **[Download Workflow Logs for Detailed Analysis](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
             }
           } else if (changesDetected === 'false') {
             // No changes detected - create success report
