@@ -260,6 +260,21 @@ jobs:
             echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
             echo "changes_detected=error" >> $GITHUB_OUTPUT
             echo "changed_images=" >> $GITHUB_OUTPUT
+            
+            # Create a proper error report before exiting
+            echo "## ❌ Visual Regression Test Failed" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "**Error:** FLIP tool installation failed. Cannot proceed with image comparison." >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "### Troubleshooting Steps:" >> comparison_report.md
+            echo "1. Check that the system has Python and pip available" >> comparison_report.md
+            echo "2. Verify network connectivity for package installation" >> comparison_report.md
+            echo "3. Check for any dependency conflicts" >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "**Action Required:** Fix the FLIP installation issue and retry the workflow." >> comparison_report.md
+            
             exit 1
           }
         fi
@@ -269,6 +284,22 @@ jobs:
           echo "❌ No output images found in $OUTPUTS_DIR/ directory"
           echo "changes_detected=error" >> $GITHUB_OUTPUT
           echo "changed_images=" >> $GITHUB_OUTPUT
+          
+          # Create a proper error report before exiting
+          echo "## ❌ Visual Regression Test Failed" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Error:** No output images found in $OUTPUTS_DIR/ directory." >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "### Troubleshooting Steps:" >> comparison_report.md
+          echo "1. Verify that your application generates images in the $OUTPUTS_DIR/ directory" >> comparison_report.md
+          echo "2. Check that the outputs_directory parameter is set correctly" >> comparison_report.md
+          echo "3. Ensure that test images are committed to the repository" >> comparison_report.md
+          echo "4. For workflow_call, verify that artifacts are uploaded correctly" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Action Required:** Ensure test images exist before running visual regression testing." >> comparison_report.md
+          
           exit 1
         fi
         
@@ -1283,18 +1314,26 @@ jobs:
           console.log(`Changes detected: ${changesDetected}`);
           console.log(`Images committed successfully: ${imagesCommitted}`);
           
-          if (compareStepResult === 'failure') {
-            // Compare step failed - create error report
-            report = '## ❌ Visual Regression Test Failed\n\n' +
-                     '**Error:** The visual comparison process encountered an error and could not complete.\n\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
-                     '### Troubleshooting Steps:\n' +
-                     '1. Check that test images were generated properly in the outputs directory\n' +
-                     '2. Verify that NVIDIA FLIP is installed correctly\n' +
-                     '3. Check the workflow logs for specific error messages\n' +
-                     '4. Ensure golden master images exist and are accessible\n\n' +
-                     '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\n\n' +
-                     '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
+          if (compareStepResult === 'failure' || changesDetected === 'error') {
+            // Compare step failed or encountered an error - try to read the report file first
+            try {
+              report = fs.readFileSync('comparison_report.md', 'utf8');
+              console.log('Successfully read comparison report file with error details');
+            } catch (error) {
+              console.log('Could not read comparison report file, generating fallback error report');
+              // Fallback error report
+              report = '## ❌ Visual Regression Test Failed\n\n' +
+                       '**Error:** The visual comparison process encountered an error and could not complete.\n\n' +
+                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                       '**Error Details:** ' + error.message + '\n\n' +
+                       '### Troubleshooting Steps:\n' +
+                       '1. Check that test images were generated properly in the outputs directory\n' +
+                       '2. Verify that NVIDIA FLIP is installed correctly\n' +
+                       '3. Check the workflow logs for specific error messages\n' +
+                       '4. Ensure golden master images exist and are accessible\n\n' +
+                       '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\n\n' +
+                       '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
+            }
           } else if (changesDetected === 'true') {
             // Changes detected - use full comparison report
             try {
