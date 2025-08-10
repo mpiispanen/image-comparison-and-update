@@ -226,14 +226,90 @@ jobs:
       id: compare
       continue-on-error: true
       run: |
-        set -euo pipefail  # Enable strict error handling
+        # Create error reporting helper function
+        create_error_report() {
+          local error_title="$1"
+          local error_description="$2"
+          local troubleshooting_steps="$3"
+          
+          # Create a complete, clean error report
+          echo "# ❌ Visual Regression Test Failed" > comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Error:** $error_description" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Test Run:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "## Error Details" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "$error_title" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "### Troubleshooting Steps:" >> comparison_report.md
+          echo -e "$troubleshooting_steps" >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "**Action Required:** Please review the error details above and fix any underlying issues before retrying." >> comparison_report.md
+          echo "" >> comparison_report.md
+          echo "📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> comparison_report.md
+          
+          # Ensure the file is fully written
+          sync
+          echo "✅ Complete error report created: comparison_report.md"
+          
+          # CRITICAL: Set error outputs immediately after creating error report
+          echo "changes_detected=error" >> $GITHUB_OUTPUT
+          echo "changed_images=" >> $GITHUB_OUTPUT
+        }
+        
+        # Disable strict error handling initially to control error flow
+        set -uo pipefail
         
         # Use configurable outputs directory
         OUTPUTS_DIR="${{ steps.check_images.outputs.outputs_dir }}"
         
-        # Initialize variables
+        # Initialize variables (these will be set only at the very end if successful)
         CHANGED_IMAGES=""
         CHANGES_DETECTED=false
+        
+        echo "=== Starting visual regression comparison ==="
+        echo "Output directory: $OUTPUTS_DIR"
+        
+        # Ensure FLIP is available
+        if ! command -v flip &> /dev/null; then
+          echo "❌ FLIP command not found. Installing FLIP..."
+          if ! pip install flip-evaluator; then
+            echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
+            create_error_report "FLIP Installation Failed" \
+              "FLIP tool installation failed. Cannot proceed with image comparison." \
+              "1. Check that the system has Python and pip available\n2. Verify network connectivity for package installation\n3. Check for any dependency conflicts\n4. Ensure pip has sufficient permissions to install packages"
+            exit 1
+          fi
+          echo "✅ FLIP installed successfully"
+        fi
+        
+        # Verify outputs directory exists and has images
+        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
+          echo "❌ No output images found in $OUTPUTS_DIR/ directory"
+          create_error_report "No Output Images Found" \
+            "No output images found in $OUTPUTS_DIR/ directory." \
+            "1. Verify that your application generates images in the $OUTPUTS_DIR/ directory\n2. Check that the outputs_directory parameter is set correctly\n3. Ensure that test images are committed to the repository\n4. For workflow_call, verify that artifacts are uploaded correctly\n5. Check the workflow logs to see if image generation failed"
+          exit 1
+        fi
+        
+        echo "✅ Found images in $OUTPUTS_DIR/, proceeding with comparison"
+        
+        # Set up error trap to ensure clean error reporting
+        trap 'handle_unexpected_exit $?' EXIT
+        handle_unexpected_exit() {
+          local exit_code=$1
+          if [ $exit_code -ne 0 ] && [ ! -f comparison_report.md ]; then
+            echo "⚠️ Unexpected exit detected, creating emergency error report"
+            create_error_report "Unexpected Script Exit" \
+              "The comparison script exited unexpectedly with code $exit_code." \
+              "1. Check the workflow logs for specific error messages\n2. Verify all required dependencies are available\n3. Ensure sufficient disk space and memory\n4. Check for file permission issues\n5. Retry the workflow"
+          fi
+        }
+        
+        # Re-enable strict error handling for the main processing
+        set -euo pipefail
         
         # Create comparison report with summary table
         echo "# Visual Regression Test Results" > comparison_report.md
@@ -252,25 +328,6 @@ jobs:
         echo "" > detailed_results.md
         echo "## Detailed Results" >> detailed_results.md
         echo "" >> detailed_results.md
-        
-        # Ensure FLIP is available
-        if ! command -v flip &> /dev/null; then
-          echo "❌ FLIP command not found. Installing FLIP..."
-          pip install flip-evaluator || {
-            echo "❌ Failed to install FLIP. Cannot proceed with image comparison."
-            echo "changes_detected=error" >> $GITHUB_OUTPUT
-            echo "changed_images=" >> $GITHUB_OUTPUT
-            exit 1
-          }
-        fi
-        
-        # Verify outputs directory exists and has images
-        if [ ! -d "$OUTPUTS_DIR" ] || [ -z "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
-          echo "❌ No output images found in $OUTPUTS_DIR/ directory"
-          echo "changes_detected=error" >> $GITHUB_OUTPUT
-          echo "changed_images=" >> $GITHUB_OUTPUT
-          exit 1
-        fi
         
         # Process each output image
         for output_file in "$OUTPUTS_DIR"/*.png; do
@@ -484,16 +541,57 @@ jobs:
         # Add image embedding placeholder for later replacement
         echo "IMAGE_EMBEDDING_PLACEHOLDER" >> comparison_report.md
         
-        # Set outputs for next steps
-        echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
-        echo "changed_images=$CHANGED_IMAGES" >> $GITHUB_OUTPUT
-        
         # If no changes, add a success message
         if [ "$CHANGES_DETECTED" = "false" ]; then
           echo "✅ **All visual tests passed!** No differences detected." >> comparison_report.md
         fi
         
+        # Ensure all file writes are completed and synced to disk
+        sync
+        
+        # Verify that comparison_report.md was created and is readable BEFORE setting outputs
+        if [ ! -f comparison_report.md ]; then
+          echo "❌ ERROR: comparison_report.md was not created!"
+          create_error_report "Report File Creation Failed" \
+            "The comparison report file was not created successfully." \
+            "1. Check for disk space issues\n2. Verify file permissions\n3. Check for system errors in the logs\n4. Retry the workflow"
+          exit 1
+        fi
+        
+        # Double-check the file is readable and not empty
+        if [ ! -s comparison_report.md ]; then
+          echo "❌ ERROR: comparison_report.md is empty!"
+          create_error_report "Report File Empty" \
+            "The comparison report file was created but is empty." \
+            "1. Check for script errors during report generation\n2. Verify all comparison steps completed\n3. Check the workflow logs for specific error messages\n4. Retry the workflow"
+          exit 1
+        fi
+        
+        # Verify the report file is well-formed by checking it contains expected content
+        if ! grep -q "Visual Regression Test Results\|Visual Regression Test Failed" comparison_report.md; then
+          echo "❌ ERROR: comparison_report.md appears to be malformed!"
+          echo "File contents preview:"
+          head -10 comparison_report.md || echo "Could not read file"
+          create_error_report "Report File Malformed" \
+            "The comparison report file was created but appears to be malformed or incomplete." \
+            "1. Check for script errors during report generation\n2. Verify sufficient disk space and memory\n3. Check for interrupted file writes\n4. Review the workflow logs for specific error messages\n5. Retry the workflow"
+          exit 1
+        fi
+        
+        # CRITICAL: Only set outputs after everything is verified to be successful
+        # This prevents the race condition where outputs are set but report is incomplete
+        echo "✅ All verification checks passed, setting final outputs..."
+        echo "changes_detected=$CHANGES_DETECTED" >> $GITHUB_OUTPUT
+        echo "changed_images=$CHANGED_IMAGES" >> $GITHUB_OUTPUT
+        
+        # Clear the error trap since we completed successfully  
+        trap - EXIT
+        
         echo "✅ Comparison step completed successfully"
+        echo "📄 Report file size: $(wc -c < comparison_report.md) bytes"
+        echo "📝 Report line count: $(wc -l < comparison_report.md) lines"
+        echo "🔄 Changes detected: $CHANGES_DETECTED"
+        echo "📝 Changed images: $CHANGED_IMAGES"
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -525,12 +623,11 @@ jobs:
         ls -la diffs/ || echo "diffs/ directory not found"
         echo "Files in golden/:"
         ls -la golden/ || echo "golden/ directory not found"
-        echo "Git status before commit:"
-        git status
         echo "=============================================="
         
-        # Create a unique branch name for this PR and run
-        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}"
+        # Create a unique branch name for this PR and run with timestamp to avoid conflicts
+        TIMESTAMP=$(date +%s)
+        BRANCH_NAME="visual-diff-pr-${{ github.event.pull_request.number || 'manual' }}-run-${{ github.run_id }}-${TIMESTAMP}${{ inputs.artifact_suffix && format('-{0}', inputs.artifact_suffix) || '' }}"
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
         
         # Store current branch/commit for restoration
@@ -547,139 +644,94 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Create a temporary directory to store extracted binary content
-        TEMP_GOLDEN_DIR="/tmp/golden_binary_$$"
-        mkdir -p "$TEMP_GOLDEN_DIR"
-        
-        # Extract actual binary content from LFS before creating temporary branch
-        echo "=== Debug: Extracting golden images from LFS ==="
-        if [ -d "golden" ]; then
-          echo "Golden images found in original branch:"
-          ls -la golden/ || echo "No golden images in directory"
-          
-          # Extract binary content for each golden image
-          for golden_file in golden/*.png golden/*.jpg golden/*.jpeg; do
-            if [ -f "$golden_file" ]; then
-              filename=$(basename "$golden_file")
-              echo "Extracting binary content for $golden_file..."
-              
-              # Use git lfs smudge to extract actual binary content from LFS
-              temp_file="$TEMP_GOLDEN_DIR/$filename"
-              if git lfs smudge < "$golden_file" > "$temp_file" 2>/dev/null; then
-                # Verify we got actual binary image data
-                if file "$temp_file" | grep -q "PNG image data\|JPEG image data"; then
-                  echo "✅ Successfully extracted binary image: $filename"
-                  ls -la "$temp_file"
-                else
-                  echo "❌ $filename: git lfs smudge did not return image data, trying direct copy"
-                  cp "$golden_file" "$temp_file"
-                fi
-              else
-                echo "❌ git lfs smudge failed for $golden_file, using direct copy"
-                cp "$golden_file" "$temp_file"
-              fi
-            fi
-          done
-        else
-          echo "No golden directory found"
-        fi
-        
         # Create and switch to the temporary branch
         echo "Creating and switching to branch: $BRANCH_NAME"
-        git checkout -b "$BRANCH_NAME"
+        if ! git checkout -b "$BRANCH_NAME"; then
+          echo "❌ Failed to create branch $BRANCH_NAME"
+          echo "images_committed=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
         
-        # CRITICAL: Remove .gitattributes FIRST and commit it to prevent LFS tracking
+        # Simplify: Remove .gitattributes and .gitignore to allow all files to be committed normally
         echo "=== Debug: Disabling LFS and gitignore in temporary branch ==="
-        echo "Removing .gitattributes to prevent LFS tracking..."
-        rm -f .gitattributes
+        rm -f .gitattributes .gitignore
         
-        echo "Temporarily removing .gitignore to allow outputs/ and diffs/ to be committed..."
-        rm -f .gitignore
-        
-        # Commit the .gitattributes and .gitignore removal first to ensure no LFS tracking or ignoring
-        git add .gitattributes .gitignore 2>/dev/null || echo ".gitattributes and .gitignore already removed"
+        # Commit the removal first to ensure clean state
+        git add -A
         git commit -m "Remove LFS tracking and gitignore for image display branch" --allow-empty
         echo "✅ LFS tracking and gitignore disabled in temporary branch"
-        echo "================================================"
         
-        # Remove the original golden directory completely and recreate with binary files
+        # Copy golden images ensuring they are regular binary files
         echo "=== Debug: Setting up golden images in temporary branch ==="
-        rm -rf golden/
-        mkdir -p golden/
-        
-        # Install the extracted binary files as completely new files
-        if [ -d "$TEMP_GOLDEN_DIR" ]; then
-          for binary_file in "$TEMP_GOLDEN_DIR"/*; do
-            if [ -f "$binary_file" ]; then
-              filename=$(basename "$binary_file")
-              echo "Installing binary golden image: $filename"
-              cp "$binary_file" "golden/$filename"
+        if [ -d "golden" ]; then
+          # Check if golden images are already binary (not LFS pointers)
+          for golden_file in golden/*.png golden/*.jpg golden/*.jpeg 2>/dev/null; do
+            if [ -f "$golden_file" ]; then
+              filename=$(basename "$golden_file")
+              echo "Checking golden image: $filename"
               
-              # Verify it's actual binary data in the temp branch
-              if file "golden/$filename" | grep -q "PNG image data\|JPEG image data"; then
-                echo "✅ golden/$filename is confirmed binary image data"
-                ls -la "golden/$filename"
+              # Check if file is actually binary image data
+              if file "$golden_file" | grep -q "PNG image data\|JPEG image data"; then
+                echo "✅ $filename is already binary image data"
               else
-                echo "❌ golden/$filename is not valid image data"
-                head -2 "golden/$filename"
+                echo "⚠️ $filename might be LFS pointer, attempting to get binary data"
+                # Try to get binary data from LFS
+                if git lfs smudge < "$golden_file" > "golden/${filename}.tmp" 2>/dev/null; then
+                  if file "golden/${filename}.tmp" | grep -q "PNG image data\|JPEG image data"; then
+                    mv "golden/${filename}.tmp" "$golden_file"
+                    echo "✅ Successfully converted $filename from LFS to binary"
+                  else
+                    rm -f "golden/${filename}.tmp"
+                    echo "❌ Could not extract binary data for $filename"
+                  fi
+                else
+                  rm -f "golden/${filename}.tmp"
+                  echo "❌ LFS smudge failed for $filename"
+                fi
               fi
             fi
           done
         fi
         
-        # Since LFS is now disabled, these should be added as regular binary files
-        echo "=== Debug: Ensuring golden images are treated as regular binary files ==="
-        echo "Git LFS status in temporary branch:"
-        git lfs ls-files || echo "No LFS files (this is expected)"
-        echo "=============================================="
-        
-        # Add all generated images and verify what's being added
-        # Note: outputs directory and diffs/ were in .gitignore, but we removed it above
+        # Add all generated images
         echo "=== Debug: Adding files to git ==="
-        echo "Current git status before adding:"
-        git status --porcelain
         
-        echo "Adding $OUTPUTS_DIR/:"
-        if git add $OUTPUTS_DIR/; then
-          echo "✅ $OUTPUTS_DIR/ added successfully"
-        else
-          echo "❌ Failed to add $OUTPUTS_DIR/"
+        # Add outputs directory if it exists
+        if [ -d "$OUTPUTS_DIR" ] && [ -n "$(ls -A "$OUTPUTS_DIR"/*.png 2>/dev/null)" ]; then
+          echo "Adding $OUTPUTS_DIR/ directory..."
+          git add "$OUTPUTS_DIR/"
         fi
         
-        echo "Adding diffs/:"
-        if git add diffs/; then
-          echo "✅ diffs/ added successfully" 
-        else
-          echo "❌ Failed to add diffs/"
+        # Add diffs directory if it exists  
+        if [ -d "diffs" ] && [ -n "$(ls -A diffs/ 2>/dev/null)" ]; then
+          echo "Adding diffs/ directory..."
+          git add diffs/
         fi
         
-        echo "Adding golden/:"
-        if git add golden/; then
-          echo "✅ golden/ added successfully"
-        else
-          echo "❌ Failed to add golden/"
+        # Add golden directory
+        if [ -d "golden" ] && [ -n "$(ls -A golden/ 2>/dev/null)" ]; then
+          echo "Adding golden/ directory..."
+          git add golden/
         fi
         
         echo "Git status after adding:"
         git status --porcelain
-        echo "==========================="
         
         # Commit if there are changes
         if ! git diff --cached --quiet; then
           echo "=== Debug: Changes detected, committing ==="
           echo "Files to be committed:"
           git diff --cached --name-only
-          echo "Committing changes..."
           
           git commit -m "Temporary visual diff images for PR #${{ github.event.pull_request.number || github.run_number }}"
           
-          echo "Commit successful, pushing to origin with retry logic..."
-          # Push the branch with retry logic for race conditions
+          echo "Commit successful, pushing to origin..."
+          # Push the branch with retry logic
           PUSH_SUCCESS=false
-          MAX_ATTEMPTS=3
+          MAX_ATTEMPTS=5
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "Push attempt $attempt of $MAX_ATTEMPTS..."
-            if timeout 60 git push origin "$BRANCH_NAME"; then
+            if timeout 120 git push origin "$BRANCH_NAME" 2>&1; then
               PUSH_SUCCESS=true
               echo "✅ Push successful on attempt $attempt"
               break
@@ -687,57 +739,58 @@ jobs:
               echo "❌ Push failed on attempt $attempt"
               if [ $attempt -lt $MAX_ATTEMPTS ]; then
                 echo "Waiting before retry..."
-                sleep $((attempt * 2))
-                # Try to pull any conflicting changes and retry
-                git pull origin "$BRANCH_NAME" --allow-unrelated-histories 2>/dev/null || echo "No remote branch to pull"
+                sleep $((attempt * 3))
               fi
             fi
           done
           
           if [ "$PUSH_SUCCESS" = "true" ]; then
-            echo "images_committed=true" >> $GITHUB_OUTPUT
-            echo "✅ Successfully committed images to branch: $BRANCH_NAME"
+            # Wait a moment for GitHub to process the push
+            echo "Waiting for GitHub to process the push..."
+            sleep 10
             
-            # Debug: Verify images are accessible via HTTP URLs (for workflow debugging)
-            echo "=== Debug: Verifying image commit success ==="
+            # Verify that at least one image is accessible via HTTP
             REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/$BRANCH_NAME"
-            echo "Repository URL: $REPO_URL"
-            echo "Expected image URLs:"
-            for output_file in $OUTPUTS_DIR/*.png; do
+            VERIFICATION_SUCCESS=false
+            
+            echo "=== Debug: Verifying image accessibility ==="
+            for output_file in $OUTPUTS_DIR/*.png 2>/dev/null; do
               if [ -f "$output_file" ]; then
                 filename=$(basename "$output_file")
-                echo "  Golden: $REPO_URL/golden/$filename"
-                echo "  Output: $REPO_URL/$OUTPUTS_DIR/$filename"
-                echo "  Diff: $REPO_URL/diffs/diff_$filename"
+                test_url="$REPO_URL/$OUTPUTS_DIR/$filename"
+                echo "Testing URL: $test_url"
+                
+                # Use curl to verify the image is accessible
+                if curl -s -f -I "$test_url" >/dev/null 2>&1; then
+                  echo "✅ Image verified accessible: $filename"
+                  VERIFICATION_SUCCESS=true
+                  break
+                else
+                  echo "❌ Image not yet accessible: $filename"
+                fi
               fi
             done
-            echo "================================================================"
+            
+            if [ "$VERIFICATION_SUCCESS" = "true" ]; then
+              echo "images_committed=true" >> $GITHUB_OUTPUT
+              echo "✅ Successfully committed and verified images in branch: $BRANCH_NAME"
+            else
+              echo "images_committed=false" >> $GITHUB_OUTPUT
+              echo "❌ Images were committed but are not yet accessible via HTTP"
+              echo "This may be due to GitHub CDN propagation delays"
+            fi
           else
             echo "images_committed=false" >> $GITHUB_OUTPUT
-            echo "❌ Failed to push after 3 attempts"
-            echo "This will prevent image embedding in the PR comment"
+            echo "❌ Failed to push branch after $MAX_ATTEMPTS attempts"
           fi
         else
           echo "images_committed=false" >> $GITHUB_OUTPUT
-          echo "❌ No changes to commit - this indicates the images were not generated or available"
-          echo "This will prevent image embedding in the PR comment"
-          echo "Debugging git status:"
-          git status
-          echo "Files in outputs directory:"
-          ls -la $OUTPUTS_DIR/ || echo "outputs directory not found"
-          echo "Files in diffs directory:"
-          ls -la diffs/ || echo "diffs directory not found"
-          echo "Files in golden directory:"
-          ls -la golden/ || echo "golden directory not found"
+          echo "❌ No changes to commit"
         fi
-        
-        # Clean up temporary directory
-        echo "Cleaning up temporary golden images directory..."
-        rm -rf "$TEMP_GOLDEN_DIR" || echo "Failed to clean up temporary directory"
         
         # Return to original branch
         echo "Returning to original branch: $ORIGINAL_BRANCH"
-        git checkout "$ORIGINAL_BRANCH"
+        git checkout "$ORIGINAL_BRANCH" || echo "Warning: could not return to original branch"
     
     - name: Return to original branch
       if: always()
@@ -773,6 +826,10 @@ jobs:
             echo "Using repository URL: $REPO_URL"
             echo "Branch name: $BRANCH_NAME"
             
+            # Wait a bit more for GitHub CDN to propagate
+            echo "Waiting for GitHub CDN propagation..."
+            sleep 15
+            
             # Process each output image to replace placeholders with actual image URLs
             image_files_found=false
             
@@ -796,25 +853,74 @@ jobs:
                   output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
                   diff_url="$REPO_URL/diffs/diff_$filename"
                   
+                  # Verify URLs are accessible before using them
+                  echo "=== Verifying image URLs for $filename ==="
+                  output_url_valid=false
+                  golden_url_valid=false
+                  diff_url_valid=false
+                  
+                  # Test output URL
+                  if curl -s -f -I "$output_url" >/dev/null 2>&1; then
+                    echo "✅ Output URL verified: $output_url"
+                    output_url_valid=true
+                  else
+                    echo "❌ Output URL failed: $output_url"
+                  fi
+                  
+                  # Test golden URL (if golden file exists)
+                  if [ -f "$golden_file" ]; then
+                    if curl -s -f -I "$golden_url" >/dev/null 2>&1; then
+                      echo "✅ Golden URL verified: $golden_url"
+                      golden_url_valid=true
+                    else
+                      echo "❌ Golden URL failed: $golden_url"
+                    fi
+                  fi
+                  
+                  # Test diff URL (if diff file exists)
+                  if [ -f "diffs/diff_$filename" ]; then
+                    if curl -s -f -I "$diff_url" >/dev/null 2>&1; then
+                      echo "✅ Diff URL verified: $diff_url"
+                      diff_url_valid=true
+                    else
+                      echo "❌ Diff URL failed: $diff_url"
+                    fi
+                  fi
+                  
                   # Debug: Show placeholder count before replacement
                   echo "Before replacement:"
                   grep -c ".*_IMAGE_PLACEHOLDER_.*" comparison_report.md || echo "0"
                   
-                  # Replace placeholders with actual image markdown
-                  # For golden images (if they exist)
+                  # Replace placeholders with actual image markdown (only if URLs are verified)
+                  # For golden images (if they exist and URL is valid)
                   if [ -f "$golden_file" ] || grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
-                    sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|![Golden Master]('"$golden_url"')|g' comparison_report.md
+                    if [ "$golden_url_valid" = "true" ]; then
+                      echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with verified URL: $golden_url"
+                      sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|![Golden Master]('"$golden_url"')|g' comparison_report.md
+                    else
+                      echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with download fallback (URL not verified)"
+                      sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 Golden Master:** [`'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                    fi
                   fi
                   
-                  # For new/output images (always exists)
-                  echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
-                  sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|![New Output]('"$output_url"')|g' comparison_report.md
+                  # For new/output images
+                  if [ "$output_url_valid" = "true" ]; then
+                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with verified URL: $output_url"
+                    sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|![New Output]('"$output_url"')|g' comparison_report.md
+                  else
+                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with download fallback (URL not verified)"
+                    sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 New Output:** [`'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                  fi
                   
-                  # For diff images (only if it was generated)
+                  # For diff images (only if it was generated and URL is valid)
                   if [ -f "diffs/diff_$filename" ]; then
-                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
-                    sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|![Visual Difference]('"$diff_url"')|g' comparison_report.md
+                    if [ "$diff_url_valid" = "true" ]; then
+                      echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with verified URL: $diff_url"
+                      sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|![Visual Difference]('"$diff_url"')|g' comparison_report.md
+                    else
+                      echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with download fallback (URL not verified)"
+                      sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 Visual Difference:** [`diff_'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                    fi
                   else
                     # Remove diff placeholder if no diff was generated
                     echo "  Removing DIFF_IMAGE_PLACEHOLDER_${filename} (no diff generated)"
@@ -845,20 +951,52 @@ jobs:
                   output_url="$REPO_URL/$OUTPUTS_DIR/$filename"
                   diff_url="$REPO_URL/diffs/diff_$filename"
                   
-                  # Replace placeholders with actual image markdown
+                  # Verify URLs are accessible
+                  output_url_valid=false
+                  golden_url_valid=false
+                  diff_url_valid=false
+                  
+                  if curl -s -f -I "$output_url" >/dev/null 2>&1; then
+                    output_url_valid=true
+                  fi
+                  
+                  if curl -s -f -I "$golden_url" >/dev/null 2>&1; then
+                    golden_url_valid=true
+                  fi
+                  
+                  if curl -s -f -I "$diff_url" >/dev/null 2>&1; then
+                    diff_url_valid=true
+                  fi
+                  
+                  # Replace placeholders with appropriate content
                   if grep -q "GOLDEN_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                    echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with $golden_url"
-                    sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|![Golden Master]('"$golden_url"')|g' comparison_report.md
+                    if [ "$golden_url_valid" = "true" ]; then
+                      echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with verified URL"
+                      sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|![Golden Master]('"$golden_url"')|g' comparison_report.md
+                    else
+                      echo "  Replacing GOLDEN_IMAGE_PLACEHOLDER_${filename} with download fallback"
+                      sed -i 's|GOLDEN_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 Golden Master:** [`'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                    fi
                   fi
                   
                   if grep -q "NEW_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                    echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with $output_url"
-                    sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|![New Output]('"$output_url"')|g' comparison_report.md
+                    if [ "$output_url_valid" = "true" ]; then
+                      echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with verified URL"
+                      sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|![New Output]('"$output_url"')|g' comparison_report.md
+                    else
+                      echo "  Replacing NEW_IMAGE_PLACEHOLDER_${filename} with download fallback"
+                      sed -i 's|NEW_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 New Output:** [`'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                    fi
                   fi
                   
                   if grep -q "DIFF_IMAGE_PLACEHOLDER_${filename}" comparison_report.md; then
-                    echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with $diff_url"
-                    sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|![Visual Difference]('"$diff_url"')|g' comparison_report.md
+                    if [ "$diff_url_valid" = "true" ]; then
+                      echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with verified URL"
+                      sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|![Visual Difference]('"$diff_url"')|g' comparison_report.md
+                    else
+                      echo "  Replacing DIFF_IMAGE_PLACEHOLDER_${filename} with download fallback"
+                      sed -i 's|DIFF_IMAGE_PLACEHOLDER_'"${filename}"'|**📁 Visual Difference:** [`diff_'"${filename}"'`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) (Download artifacts to view)|g' comparison_report.md
+                    fi
                   fi
                 done
               else
@@ -866,13 +1004,12 @@ jobs:
               fi
             fi
             
-            # Add acceptance commands section and download backup as footnote
-            echo "" >> comparison_report.md
-            echo "## 🔧 Accept New Images" >> comparison_report.md
-            echo "" >> comparison_report.md
-            
+            # Add acceptance commands section only if there are changed images
             CHANGED_IMAGES="${{ steps.compare.outputs.changed_images }}"
             if [ -n "$CHANGED_IMAGES" ] && [ "$CHANGED_IMAGES" != " " ]; then
+              echo "" >> comparison_report.md
+              echo "## 🔧 Accept New Images" >> comparison_report.md
+              echo "" >> comparison_report.md
               echo "To accept any of the new output images as golden masters, copy and paste the relevant commands below:" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "\`\`\`" >> comparison_report.md
@@ -882,14 +1019,14 @@ jobs:
               echo "\`\`\`" >> comparison_report.md
               echo "" >> comparison_report.md
               echo "> **Note:** These commands will commit the new images to the **PR branch** (not the temporary display branch) and update the golden master files for future comparisons." >> comparison_report.md
-            else
-              echo "No changed images require acceptance." >> comparison_report.md
             fi
             
             echo "" >> comparison_report.md
             echo "## 📦 Backup Download" >> comparison_report.md
             echo "" >> comparison_report.md
             echo "> **Note:** Images may take a few moments to load due to CDN propagation. If images don't display immediately, please refresh the page or try again in a minute." >> comparison_report.md
+            echo "" >> comparison_report.md
+            echo "> **If images are not displaying:** This can happen due to GitHub CDN delays or temporary branch access issues. All images are available for download in the workflow artifacts below." >> comparison_report.md
             echo "" >> comparison_report.md
             echo "If images don't load above, download the complete results: **[Visual Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})**" >> comparison_report.md
             echo "" >> comparison_report.md
@@ -1185,6 +1322,36 @@ jobs:
         fi
         echo "=================================="
 
+    - name: Wait for comparison step completion
+      if: always()
+      run: |
+        echo "=== Ensuring comparison step is fully complete ==="
+        echo "Compare step outcome: ${{ steps.compare.outcome }}"
+        echo "Changes detected: ${{ steps.compare.outputs.changes_detected }}"
+        
+        # Wait a moment to ensure all file operations are complete
+        echo "Waiting for file system synchronization..."
+        sleep 5
+        
+        # Verify the comparison step has finished writing all outputs
+        echo "Checking comparison step outputs and file state..."
+        if [ -f comparison_report.md ]; then
+          echo "✅ Report file exists"
+          echo "📄 Report file size: $(wc -c < comparison_report.md) bytes"
+          echo "📝 Report line count: $(wc -l < comparison_report.md) lines"
+          
+          # Check if file appears to be complete
+          if [ -s comparison_report.md ]; then
+            echo "✅ Report file is not empty"
+          else
+            echo "⚠️ Report file is empty - this may indicate an incomplete process"
+          fi
+        else
+          echo "⚠️ Report file does not exist - this may indicate comparison step failure"
+        fi
+        
+        echo "=== Synchronization check complete ==="
+
     - name: Comment PR with visual diff results
       if: always()
       uses: actions/github-script@v7
@@ -1244,44 +1411,88 @@ jobs:
           console.log(`Changes detected: ${changesDetected}`);
           console.log(`Images committed successfully: ${imagesCommitted}`);
           
-          if (compareStepResult === 'failure') {
-            // Compare step failed - create error report
-            report = '## ❌ Visual Regression Test Failed\\n\\n' +
-                     '**Error:** The visual comparison process encountered an error and could not complete.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                     '### Troubleshooting Steps:\\n' +
-                     '1. Check that test images were generated properly in the outputs directory\\n' +
-                     '2. Verify that NVIDIA FLIP is installed correctly\\n' +
-                     '3. Check the workflow logs for specific error messages\\n' +
-                     '4. Ensure golden master images exist and are accessible\\n\\n' +
-                     '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\\n\\n' +
-                     '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
-          } else if (changesDetected === 'true') {
-            // Changes detected - use full comparison report
+          // First, check if the comparison step actually succeeded
+          if (compareStepResult === 'failure' || changesDetected === 'error') {
+            // Compare step failed or encountered an error - try to read the report file first
             try {
-              report = fs.readFileSync('comparison_report.md', 'utf8');
+              if (require('fs').existsSync('comparison_report.md')) {
+                const reportContent = fs.readFileSync('comparison_report.md', 'utf8');
+                // Verify the report contains actual content (not just a partial file)
+                if (reportContent.length > 100 && reportContent.includes('Visual Regression Test')) {
+                  report = reportContent;
+                  console.log('Successfully read complete comparison report file with error details');
+                } else {
+                  throw new Error('Report file exists but appears incomplete or corrupted');
+                }
+              } else {
+                throw new Error('Report file does not exist');
+              }
             } catch (error) {
-              report = '## ❌ Visual Regression Test Results\\n\\n' +
-                       '**Error:** Comparison completed but report file could not be read.\\n\\n' +
-                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                       '**Error Details:** ' + error.message + '\\n\\n' +
-                       '📦 **[Download Visual Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
+              console.log(`Could not read comparison report file: ${error.message}`);
+              console.log('Generating fallback error report');
+              // Fallback error report
+              report = '## ❌ Visual Regression Test Failed\n\n' +
+                       '**Error:** The visual comparison process encountered an error and could not complete.\n\n' +
+                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                       `**Error Details:** ${error.message}\n\n` +
+                       '### Troubleshooting Steps:\n' +
+                       '1. Check that test images were generated properly in the outputs directory\n' +
+                       '2. Verify that NVIDIA FLIP is installed correctly\n' +
+                       '3. Check the workflow logs for specific error messages\n' +
+                       '4. Ensure golden master images exist and are accessible\n\n' +
+                       '**Action Required:** Please check the workflow logs and fix any underlying issues before retrying.\n\n' +
+                       '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
+            }
+          } else if (changesDetected === 'true') {
+            // Changes detected - but verify the report file exists and is complete before trusting it
+            try {
+              if (require('fs').existsSync('comparison_report.md')) {
+                const reportContent = fs.readFileSync('comparison_report.md', 'utf8');
+                // Verify the report contains actual content and isn't corrupted
+                if (reportContent.length > 100 && 
+                    (reportContent.includes('Visual Regression Test Results') || reportContent.includes('Visual Regression Test Failed'))) {
+                  report = reportContent;
+                  console.log('Successfully read complete comparison report file');
+                } else {
+                  throw new Error('Report file exists but appears incomplete or corrupted (length: ' + reportContent.length + ')');
+                }
+              } else {
+                throw new Error('Report file does not exist');
+              }
+            } catch (error) {
+              console.log(`Could not read valid comparison report file: ${error.message}`);
+              console.log('This indicates a synchronization issue - comparison step claimed success but report is invalid');
+              // This is the exact error the user is experiencing - create a specific error report
+              report = '## ❌ Visual Regression Test Synchronization Error\n\n' +
+                       '**Error:** The comparison step indicated changes were detected, but the report file could not be read or is incomplete.\n\n' +
+                       '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                       `**Technical Details:** ${error.message}\n\n` +
+                       '### This Indicates:\n' +
+                       '1. A race condition between the comparison and comment steps\n' +
+                       '2. The comparison step may have been interrupted after setting outputs\n' +
+                       '3. File system synchronization issues\n' +
+                       '4. Partial script execution due to timeouts or resource constraints\n\n' +
+                       '### Recommended Actions:\n' +
+                       '1. Re-run the workflow to see if the issue persists\n' +
+                       '2. Check the workflow logs for any timeout or resource warnings\n' +
+                       '3. Report this as a workflow issue if it continues to occur\n\n' +
+                       '📦 **[Download Workflow Logs for Detailed Analysis](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
             }
           } else if (changesDetected === 'false') {
             // No changes detected - create success report
-            report = '✅ **Visual tests passed!** No differences detected.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
+            report = '✅ **Visual tests passed!** No differences detected.\n\n' +
+                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
                      'All generated images match their golden master references within acceptable tolerance.';
           } else {
             // Unexpected state - create diagnostic report
-            report = '## ⚠️ Visual Regression Test Status Unknown\\n\\n' +
-                     '**Warning:** The visual comparison process completed but the results are unclear.\\n\\n' +
-                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\\n\\n' +
-                     '**Debug Information:**\\n' +
-                     '- Compare step outcome: ' + compareStepResult + '\\n' +
-                     '- Changes detected value: "' + changesDetected + '"\\n' +
-                     '- Images committed: ' + imagesCommitted + '\\n\\n' +
-                     '**Action Required:** Please check the workflow logs to determine what happened.\\n\\n' +
+            report = '## ⚠️ Visual Regression Test Status Unknown\n\n' +
+                     '**Warning:** The visual comparison process completed but the results are unclear.\n\n' +
+                     '**Test Run:** ' + new Date().toISOString().replace('T', ' ').substr(0, 19) + ' UTC\n\n' +
+                     '**Debug Information:**\n' +
+                     '- Compare step outcome: ' + compareStepResult + '\n' +
+                     '- Changes detected value: "' + changesDetected + '"\n' +
+                     '- Images committed: ' + imagesCommitted + '\n\n' +
+                     '**Action Required:** Please check the workflow logs to determine what happened.\n\n' +
                      '📦 **[Download Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**';
           }
           

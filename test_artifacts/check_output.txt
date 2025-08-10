@@ -1,0 +1,2 @@
+has_images=false
+image_count=0
