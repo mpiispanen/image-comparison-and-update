@@ -1,0 +1,211 @@
+name: Accept Image (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'The filename to accept'
+        required: true
+        type: string
+      pr_number:
+        description: 'The PR number in the target repo'
+        required: true
+        type: number
+      target_repo:
+        description: 'The repository (owner/repo) whose PR branch will be updated'
+        required: true
+        type: string
+      artifact_name:
+        description: 'The name of the artifact containing candidate images'
+        required: true
+        type: string
+      reference_dir:
+        description: 'Directory in the target repo for reference images'
+        required: false
+        default: 'golden'
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read  # Needed for artifact access
+
+jobs:
+  accept-image:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Validate inputs
+      id: validate
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const imageName = '${{ inputs.image }}';
+          const targetRepo = '${{ inputs.target_repo }}';
+          const referenceDir = '${{ inputs.reference_dir }}';
+          
+          // Validate image name to prevent injection attacks
+          if (!/^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/i.test(imageName)) {
+            core.setFailed('Invalid image name. Must be alphanumeric with valid image extension (.png, .jpg, .jpeg)');
+            return;
+          }
+          
+          // Validate target_repo format
+          if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(targetRepo)) {
+            core.setFailed('Invalid target_repo format. Must be in owner/repo format');
+            return;
+          }
+          
+          // Validate reference_dir (basic path validation)
+          if (!/^[a-zA-Z0-9._/-]+$/.test(referenceDir)) {
+            core.setFailed('Invalid reference_dir. Must contain only alphanumeric characters, dots, hyphens, underscores, and forward slashes');
+            return;
+          }
+          
+          console.log(`Image to accept: ${imageName}`);
+          console.log(`Target repository: ${targetRepo}`);
+          console.log(`Reference directory: ${referenceDir}`);
+          
+          const [owner, repo] = targetRepo.split('/');
+          core.setOutput('target_owner', owner);
+          core.setOutput('target_repo_name', repo);
+    
+    - name: Get PR details
+      id: pr
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const targetOwner = '${{ steps.validate.outputs.target_owner }}';
+          const targetRepoName = '${{ steps.validate.outputs.target_repo_name }}';
+          const prNumber = ${{ inputs.pr_number }};
+          
+          const { data: pr } = await github.rest.pulls.get({
+            owner: targetOwner,
+            repo: targetRepoName,
+            pull_number: prNumber
+          });
+          
+          core.setOutput('head_ref', pr.head.ref);
+          core.setOutput('head_sha', pr.head.sha);
+    
+    - name: Install Git LFS
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git-lfs
+        git lfs install
+    
+    - name: Checkout PR branch
+      uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+      with:
+        repository: ${{ inputs.target_repo }}
+        ref: ${{ steps.pr.outputs.head_ref }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        lfs: true
+        fetch-depth: 0
+    
+    - name: Configure Git
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ./artifacts/
+    
+    - name: Accept and commit image
+      run: |
+        set -euo pipefail  # Enable strict error handling
+        
+        IMAGE_NAME="${{ inputs.image }}"
+        REFERENCE_DIR="${{ inputs.reference_dir }}"
+        PR_NUMBER="${{ inputs.pr_number }}"
+        
+        echo "=== Accepting image: $IMAGE_NAME ==="
+        echo "Current branch: $(git branch --show-current)"
+        echo "This will commit to the PR branch: ${{ steps.pr.outputs.head_ref }}"
+        echo "Reference directory: $REFERENCE_DIR"
+        echo "=============================================="
+        
+        # Ensure reference directory exists
+        mkdir -p "$REFERENCE_DIR"
+        
+        # Check if the image exists in artifacts with secure path handling
+        if [ ! -f "artifacts/outputs/$IMAGE_NAME" ]; then
+          echo "Error: Image $IMAGE_NAME not found in artifacts"
+          echo "Available files in artifacts/outputs/:"
+          ls -la artifacts/outputs/ || echo "No outputs directory found"
+          exit 1
+        fi
+        
+        # Verify the source file is actually an image
+        if ! file "artifacts/outputs/$IMAGE_NAME" | grep -q "image data"; then
+          echo "Error: $IMAGE_NAME is not a valid image file"
+          exit 1
+        fi
+        
+        # Move the image to reference directory
+        cp "artifacts/outputs/$IMAGE_NAME" "$REFERENCE_DIR/$IMAGE_NAME"
+        
+        # Clean up temporary artifacts from the repository (if they exist)
+        rm -f "outputs/$IMAGE_NAME" 2>/dev/null || true
+        rm -f "diffs/diff_$(basename "$IMAGE_NAME" .png).png" 2>/dev/null || true
+        
+        # Add and commit the changes
+        git add "$REFERENCE_DIR/$IMAGE_NAME"
+        git add -u outputs/ diffs/ 2>/dev/null || true  # Remove deleted files
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit for $IMAGE_NAME"
+        else
+          git commit -m "feat(visuals): accept new golden image for $IMAGE_NAME
+          
+          Accepted via reusable workflow
+          Source: PR #$PR_NUMBER"
+          
+          # Push the changes to the PR branch
+          echo "Pushing to PR branch: ${{ steps.pr.outputs.head_ref }}"
+          if timeout 60 git push origin "${{ steps.pr.outputs.head_ref }}"; then
+            echo "Successfully committed and pushed $IMAGE_NAME to $REFERENCE_DIR directory on PR branch"
+          else
+            echo "Failed to push changes within timeout"
+            exit 1
+          fi
+        fi
+    
+    - name: Comment on success
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const imageName = '${{ inputs.image }}';
+          const targetOwner = '${{ steps.validate.outputs.target_owner }}';
+          const targetRepoName = '${{ steps.validate.outputs.target_repo_name }}';
+          const prNumber = ${{ inputs.pr_number }};
+          const referenceDir = '${{ inputs.reference_dir }}';
+          
+          await github.rest.issues.createComment({
+            owner: targetOwner,
+            repo: targetRepoName,
+            issue_number: prNumber,
+            body: `✅ Successfully accepted \`${imageName}\` as the new golden image!\n\nThe image has been committed to the \`${referenceDir}/\` directory and will be used for future comparisons.\n\nAccepted via reusable workflow`
+          });
+    
+    - name: Comment on failure
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const imageName = '${{ inputs.image }}';
+          const targetOwner = '${{ steps.validate.outputs.target_owner }}';
+          const targetRepoName = '${{ steps.validate.outputs.target_repo_name }}';
+          const prNumber = ${{ inputs.pr_number }};
+          
+          await github.rest.issues.createComment({
+            owner: targetOwner,
+            repo: targetRepoName,
+            issue_number: prNumber,
+            body: `❌ Failed to accept \`${imageName}\` as the new golden image. Please check the workflow logs for details.`
+          });
