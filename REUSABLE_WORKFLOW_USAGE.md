@@ -54,7 +54,7 @@ jobs:
     if: needs.parse-accept-command.outputs.should_accept == 'true'
     strategy:
       matrix:
-        image: ${{ fromJson(format('["{0}"]', join(split(needs.parse-accept-command.outputs.image_list, ','), '","'))) }}
+        image: ${{ fromJson(format('["{0}"]', join(split(needs.parse_accept_command.outputs.image_list, ','), '","'))) }}
     uses: mpiispanen/image-comparison-and-update/.github/workflows/accept-image-reusable.yml@main
     with:
       image: ${{ matrix.image }}

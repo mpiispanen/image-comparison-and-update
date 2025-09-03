@@ -45,9 +45,14 @@ jobs:
           const targetRepo = '${{ inputs.target_repo }}';
           const referenceDir = '${{ inputs.reference_dir }}';
           
-          // Validate image name to prevent injection attacks
-          if (!/^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/i.test(imageName)) {
-            core.setFailed('Invalid image name. Must be alphanumeric with valid image extension (.png, .jpg, .jpeg)');
+          // Disallow filenames starting with a dot, containing '..', or any directory separator
+          if (
+            !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.(png|jpg|jpeg)$/i.test(imageName) ||
+            imageName.includes('..') ||
+            imageName.includes('/') ||
+            imageName.includes('\\')
+          ) {
+            core.setFailed('Invalid image name. Must be alphanumeric, not start with a dot, not contain "..", "/", or "\\", and have a valid image extension (.png, .jpg, .jpeg)');
             return;
           }
           
@@ -161,10 +166,9 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit for $IMAGE_NAME"
         else
-          git commit -m "feat(visuals): accept new golden image for $IMAGE_NAME
-          
-          Accepted via reusable workflow
-          Source: PR #$PR_NUMBER"
+          git commit -m "feat(visuals): accept new golden image for $IMAGE_NAME" \
+            -m "Accepted via reusable workflow" \
+            -m "Source: PR #$PR_NUMBER"
           
           # Push the changes to the PR branch
           echo "Pushing to PR branch: ${{ steps.pr.outputs.head_ref }}"
